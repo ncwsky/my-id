@@ -23,8 +23,6 @@ class IdLib
      */
     protected static $onAlarm = null;
 
-    public static $idList = [];
-
     public static function toJson($buffer)
     {
         return json_encode($buffer, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

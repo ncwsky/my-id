@@ -17,6 +17,30 @@ class IdFile extends IdGenerate
         return \SrvBase::$instance->runDir . '/.' . \SrvBase::$instance->serverName().'.json';
     }
 
+    /**
+     * 返回自增的id
+     * @param $name
+     * @return string
+     */
+    protected function incrId($name){
+        static::$idList[$name]['last_id'] = static::$idList[$name]['last_id'] + static::$idList[$name]['delta'];
+        if (static::$idList[$name]['last_id'] > static::$idList[$name]['pro_load_id']) { //达到预载条件
+            $this->toPreLoadId($name);
+        }
+        return (string)static::$idList[$name]['last_id'];
+    }
+
+    /**
+     * 预载下一段id
+     * @param $name
+     */
+    protected function toPreLoadId($name)
+    {
+        static::$idList[$name]['pro_load_id'] = static::$idList[$name]['max_id'] + static::$idList[$name]['pre_step'];
+        static::$idList[$name]['max_id'] = static::$idList[$name]['max_id'] + static::$idList[$name]['step'];
+        static::$isChange = true;
+    }
+
     public function init(){
         $lockFile = \SrvBase::$instance->runDir . '/' . \SrvBase::$instance->serverName() . '.lock';
         $is_abnormal = file_exists($lockFile);
@@ -84,30 +108,6 @@ class IdFile extends IdGenerate
             }
         }
         return $idRet;
-    }
-
-    /**
-     * 返回自增的id
-     * @param $name
-     * @return string
-     */
-    protected function incrId($name){
-        static::$idList[$name]['last_id'] = static::$idList[$name]['last_id'] + static::$idList[$name]['delta'];
-        if (static::$idList[$name]['last_id'] > static::$idList[$name]['pro_load_id']) { //达到预载条件
-            $this->toPreLoadId($name);
-        }
-        return (string)static::$idList[$name]['last_id'];
-    }
-
-    /**
-     * 预载下一段id
-     * @param $name
-     */
-    protected function toPreLoadId($name)
-    {
-        static::$idList[$name]['pro_load_id'] = static::$idList[$name]['max_id'] + static::$idList[$name]['pre_step'];
-        static::$idList[$name]['max_id'] = static::$idList[$name]['max_id'] + static::$idList[$name]['step'];
-        static::$isChange = true;
     }
 
     /**

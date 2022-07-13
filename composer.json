@@ -1,6 +1,6 @@
 {
     "name": "myphps/my-id",
-    "description": "id生成服务",
+    "description": "基于workerman的单进程id生成服务",
     "license": "MIT",
     "keywords": ["id"],
     "homepage": "https://github.com/ncwsky/my-id",
