@@ -7,7 +7,25 @@ namespace MyId;
  */
 class IdLib
 {
-    use IdMsg;
+    public static $myMsg = '';
+    public static $myCode = 0;
+    //消息记录
+    public static function msg($msg=null, $code=0){
+        if ($msg === null) {
+            return self::$myMsg;
+        } else {
+            self::$myMsg = $msg;
+            self::$myCode = $code;
+        }
+    }
+    //错误提示设置或读取
+    public static function err($msg=null, $code=1){
+        if ($msg === null) {
+            return self::$myMsg;
+        } else {
+            self::msg('-'.$msg, $code);
+        }
+    }
 
     public static $authKey = '';
     public static $allowIp = '';
@@ -93,9 +111,6 @@ class IdLib
     {
         if (\SrvBase::$instance->isWorkerMan) return $con->getRemoteIp();
 
-        if (is_array($fd)) { // swoole udp 客户端信息包括address/port/server_socket等多项客户端信息数据
-            return $fd['address'];
-        }
         return $con->getClientInfo($fd)['remote_ip'];
     }
 

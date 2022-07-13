@@ -1,6 +1,8 @@
 <?php
 namespace MyId;
 
+use Workerman\Connection\TcpConnection;
+
 /**
  * id自增 - 用于本机服务 自增最大值32|64位有符号
  * Class IdServerIncr
@@ -8,17 +10,6 @@ namespace MyId;
  */
 class IdServerIncr
 {
-    use IdMsg;
-
-    //错误提示设置或读取
-    public static function err($msg=null, $code=1){
-        if ($msg === null) {
-            return self::$myMsg;
-        } else {
-            self::msg('-'.$msg, $code);
-        }
-    }
-
     /**
      * 信息统计
      * @var array
@@ -71,9 +62,9 @@ class IdServerIncr
 
     /**
      * 处理数据
-     * @param $con
+     * @param TcpConnection $con
      * @param string $recv
-     * @param int|array $fd
+     * @param int $fd
      * @return bool|array
      * @throws \Exception
      */
@@ -83,29 +74,31 @@ class IdServerIncr
 
         if(substr($recv, 0, 3)==='GET'){
             $url = substr($recv, 4, strpos($recv, ' ', 4) - 4);
-            if (!$url) {
-                static::err('URL read failed');
-                return false;
-            }
             return static::httpGetHandle($con, $url, $fd);
         }
 
-        \SrvBase::$isConsole && \SrvBase::safeEcho($recv . PHP_EOL);
+        //\SrvBase::$isConsole && \SrvBase::safeEcho($recv . PHP_EOL);
         //\Log::trace($recv);
 
         return static::handle($con, $recv, $fd);
     }
 
+    /**
+     * @param TcpConnection $con
+     * @param string $recv
+     * @param int $fd
+     * @return array|bool|false|string
+     * @throws \Exception
+     */
     protected static function handle($con, $recv, $fd=0){
         //认证处理
         $authRet = IdLib::auth($con, $fd, $recv);
         if (!$authRet) {
-            //static::err(IdLib::err());
             IdLib::toClose($con, $fd, IdLib::err());
-            return '';
+            return false;
         }
         if($authRet==='ok'){
-            return 'ok';
+            return $con->send('ok');
         }
 
         if ($recv[0] == '{') { // substr($recv, 0, 1) == '{' && substr($recv, -1) == '}'
@@ -115,8 +108,7 @@ class IdServerIncr
         }
 
         if (empty($data)) {
-            static::err('empty data: '.$recv);
-            return false;
+            return $con->send('empty data: '.$recv);
         }
         if (!isset($data['a'])) $data['a'] = 'id';
 
@@ -135,10 +127,10 @@ class IdServerIncr
                 $ret = static::info();
                 break;
             default:
-                self::err('invalid request');
+                IdLib::err('invalid request');
                 $ret = false;
         }
-        return $ret;
+        return $con->send($ret !== false ? $ret : IdLib::err());
     }
 
     /**
@@ -149,6 +141,10 @@ class IdServerIncr
      * @throws \Exception
      */
     protected static function httpGetHandle($con, $url, $fd=0){
+        if (!$url) {
+            IdLib::err('URL read failed');
+            return static::httpSend($con, $fd, false);
+        }
         $parse = parse_url($url);
         $data = [];
         $path = $parse['path'];
@@ -158,7 +154,6 @@ class IdServerIncr
 
         //认证处理
         if (!IdLib::auth($con, $fd, $data['key']??'nil')) {
-            static::err(IdLib::err());
             return static::httpSend($con, $fd, false);
         }
 
@@ -177,7 +172,7 @@ class IdServerIncr
                 $ret = static::info();
                 break;
             default:
-                self::err('Invalid Request '.$path);
+                IdLib::err('Invalid Request '.$path);
                 $ret = false;
         }
 
@@ -195,7 +190,7 @@ class IdServerIncr
         $reason = 'OK';
         if ($ret === false) {
             $code = 400;
-            $ret = self::err();
+            $ret = IdLib::err();
             $reason = 'Bad Request';
         }
 

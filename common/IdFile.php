@@ -2,11 +2,14 @@
 namespace MyId;
 
 
-class IdFile extends IdGenerate
+class IdFile implements IdGenerate
 {
-    use IdMsg;
+    const ALLOW_ID_NUM = 256; //允许的id数量
+    const DEF_STEP = 100000; //默认步长
+    const MIN_STEP = 1000; //最小步长
+    const PRE_LOAD_RATE = 0.2; //下一段id预载比率
 
-    protected static $isChange = false;
+    protected $isChange = false;
     /**
      * id列表记录  ['name'=>[init_id,max_id,step,delta], ...]
      * @var array
@@ -38,7 +41,7 @@ class IdFile extends IdGenerate
     {
         static::$idList[$name]['pro_load_id'] = static::$idList[$name]['max_id'] + static::$idList[$name]['pre_step'];
         static::$idList[$name]['max_id'] = static::$idList[$name]['max_id'] + static::$idList[$name]['step'];
-        static::$isChange = true;
+        $this->isChange = true;
     }
 
     public function init(){
@@ -59,7 +62,7 @@ class IdFile extends IdGenerate
                     static::$idList[$name]['pro_load_id'] = $info['max_id'] + $info['pre_step'];
                 }
             }
-            static::$isChange = true;
+            $this->isChange = true;
         }
     }
 
@@ -68,14 +71,14 @@ class IdFile extends IdGenerate
     }
 
     public function save(){
-        if (!static::$isChange) return;
-        static::$isChange = false;
+        if (!$this->isChange) return;
+        $this->isChange = false;
         file_put_contents(static::jsonFileName(), json_encode(static::$idList), LOCK_EX | LOCK_NB);
     }
 
     public function stop(){
-        static::$isChange = true;
-        static::save();
+        $this->isChange = true;
+        $this->save();
         $lockFile = \SrvBase::$instance->runDir . '/' . \SrvBase::$instance->serverName() . '.lock';
         file_exists($lockFile) && unlink($lockFile);
     }
@@ -87,12 +90,12 @@ class IdFile extends IdGenerate
      */
     public function nextId($data){
         if (empty($data['name'])) {
-            self::err('Invalid ID name');
+            IdLib::err('Invalid ID name');
             return false;
         }
         $name = strtolower($data['name']);
         if (!isset(static::$idList[$name])) {
-            self::err('ID name does not exist');
+            IdLib::err('ID name does not exist');
             return false;
         }
         $size = isset($data['size']) ? (int)$data['size'] : 1;
@@ -118,16 +121,16 @@ class IdFile extends IdGenerate
     public function initId($data){
         $name = isset($data['name']) ? trim($data['name']) : '';
         if (!$name) {
-            self::err('Invalid ID name');
+            IdLib::err('Invalid ID name');
             return false;
         }
         $name = strtolower($name);
         if (isset(static::$idList[$name])) {
-            self::err('This ID name already exists');
+            IdLib::err('This ID name already exists');
             return false;
         }
         if (count(static::$idList) >= static::ALLOW_ID_NUM) {
-            self::err('已超出可设置id数');
+            IdLib::err('已超出可设置id数');
             return false;
         }
 
@@ -139,14 +142,14 @@ class IdFile extends IdGenerate
 
         $max_id = $init_id + $step;
         if ($max_id > PHP_INT_MAX) {
-            self::err('Invalid max_id['. $max_id .']!');
+            IdLib::err('Invalid max_id['. $max_id .']!');
             return false;
         }
 
         static::$idList[$name] = ['init_id' => $init_id, 'max_id' => $max_id, 'step' => $step, 'delta' => $delta, 'last_id' => $init_id, 'pre_step'=>intval(static::PRE_LOAD_RATE * $step)];
         static::$idList[$name]['pro_load_id'] = $init_id + static::$idList[$name]['pre_step'];
-        static::$isChange = true;
-        static::save();
+        $this->isChange = true;
+        $this->save();
         return IdLib::toJson(static::$idList[$name]);
     }
 
@@ -157,12 +160,12 @@ class IdFile extends IdGenerate
      */
     public function updateId($data){
         if (empty($data['name'])) {
-            self::err('Invalid ID name');
+            IdLib::err('Invalid ID name');
             return false;
         }
         $name = strtolower($data['name']);
         if (!isset(static::$idList[$name])) {
-            self::err('ID name does not exist');
+            IdLib::err('ID name does not exist');
             return false;
         }
 
@@ -177,15 +180,14 @@ class IdFile extends IdGenerate
             $delta = 0;
         }
         if ($init_id > 0 && $init_id < static::$idList[$name]['last_id']) {
-            self::err('Invalid init_id[' . $init_id . ']!');
+            IdLib::err('Invalid init_id[' . $init_id . ']!');
             return false;
-            $init_id = 0;
         }
 
         if ($init_id > 0) {
             $max_id = $init_id + ($step > 0 ? $step : static::$idList[$name]['step']);
             if ($max_id > PHP_INT_MAX) {
-                self::err('Invalid max_id['. $max_id .']!');
+                IdLib::err('Invalid max_id['. $max_id .']!');
                 return false;
             }
         }
@@ -201,7 +203,7 @@ class IdFile extends IdGenerate
             static::$idList[$name]['pro_load_id'] = $init_id + static::$idList[$name]['pre_step'];
         }
 
-        static::$isChange = true;
+        $this->isChange = true;
         $this->save();
         return IdLib::toJson(static::$idList[$name]);
     }

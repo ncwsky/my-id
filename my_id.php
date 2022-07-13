@@ -21,7 +21,7 @@ if (!defined('VENDOR_DIR')) {
 defined('MY_PHP_DIR') || define('MY_PHP_DIR', VENDOR_DIR . '/myphps/myphp');
 //defined('MY_PHP_SRV_DIR') || define('MY_PHP_SRV_DIR', VENDOR_DIR . '/myphps/my-php-srv');
 
-defined('ID_NAME') || define('ID_NAME', 'my_id_incr');
+defined('ID_NAME') || define('ID_NAME', 'my_id');
 defined('ID_LISTEN') || define('ID_LISTEN', '0.0.0.0');
 defined('ID_PORT') || define('ID_PORT', 55012);
 defined('MAX_INPUT_SIZE') || define('MAX_INPUT_SIZE', 65536); //接收包限制大小64k
@@ -37,8 +37,8 @@ $port = (int)GetOpt::val('p', 'port', ID_PORT);
 $listen = GetOpt::val('l', 'listen', ID_LISTEN);
 
 if (GetOpt::has('h', 'help')) {
-    echo 'Usage: php MyIdIncr.php OPTION [restart|reload|stop]
-   or: MyIdIncr.php OPTION [restart|reload|stop]
+    echo 'Usage: php my_id.php OPTION [restart|reload|stop]
+   or: my_id.php OPTION [restart|reload|stop]
 
    --help
    -l --listen    监听地址 默认 0.0.0.0
@@ -78,8 +78,7 @@ $conf = [
             \MyId\IdLib::auth($con, $con->id, false);
         },
         'onMessage' => function (\Workerman\Connection\ConnectionInterface $connection, $data) {
-            $ret = \MyId\IdServerIncr::onReceive($connection, $data, $connection->id);
-            $connection->send($ret !== false ? $ret : \MyId\IdServerIncr::err());
+            \MyId\IdServerIncr::onReceive($connection, $data, $connection->id);
         },
     ],
     // 进程内加载的文件
