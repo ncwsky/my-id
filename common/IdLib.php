@@ -11,6 +11,10 @@ class IdLib
 
     public static $authKey = '';
     public static $allowIp = '';
+    /**
+     * @var IdFile
+     */
+    public static $idObj;
 
     protected static $alarmInterval = 0;
     protected static $alarmFail = 0;
@@ -19,6 +23,7 @@ class IdLib
      */
     protected static $onAlarm = null;
 
+    public static $idList = [];
 
     public static function toJson($buffer)
     {
@@ -69,6 +74,12 @@ class IdLib
     {
         static::$allowIp = GetC('allow_ip');
         static::$authKey = GetC('auth_key');
+        if (GetC('db.name')) {
+            static::$idObj = new IdDb();
+        } else {
+            static::$idObj = new IdFile();
+        }
+        IdLib::$idObj->init();
 
         static::$alarmInterval = (int)GetC('alarm_interval', 60);
         static::$alarmFail = GetC('alarm_fail');
