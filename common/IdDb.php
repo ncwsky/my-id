@@ -2,24 +2,20 @@
 namespace MyId;
 
 
-class IdFile implements IdGenerate
+class IdDb implements IdGenerate
 {
     const ALLOW_ID_NUM = 256; //允许的id数量
     const DEF_STEP = 100000; //默认步长
     const MIN_STEP = 1000; //最小步长
     const PRE_LOAD_RATE = 0.2; //下一段id预载比率
 
-    protected $isChange = false;
     /**
      * id列表记录  ['name'=>[init_id,max_id,step,delta], ...]
      * @var array
      */
     protected static $idList = [];
 
-    protected static function jsonFileName(){
-        return \SrvBase::$instance->runDir . '/.my_id.json';
-    }
-
+    protected static $change = [];
     /**
      * 返回自增的id
      * @param $name
@@ -41,7 +37,9 @@ class IdFile implements IdGenerate
     {
         static::$idList[$name]['pro_load_id'] = static::$idList[$name]['max_id'] + intval(static::PRE_LOAD_RATE * static::$idList[$name]['step']);
         static::$idList[$name]['max_id'] = static::$idList[$name]['max_id'] + static::$idList[$name]['step'];
-        $this->isChange = true;
+
+        static::$change[$name] = ['max_id' => static::$idList[$name]['max_id']];
+        //db()->update(['max_id' => static::$idList[$name]['max_id']], 'id_list', ['name' => $name]);
     }
 
     public function init(){
@@ -49,37 +47,48 @@ class IdFile implements IdGenerate
         $is_abnormal = file_exists($lockFile);
         touch($lockFile);
 
-        if(is_file(static::jsonFileName())){
-            static::$idList = (array)json_decode(file_get_contents(static::jsonFileName()), true);
-            //更新最大max_id
-            foreach (static::$idList as $name => $info) {
-                $pre_step = intval(static::PRE_LOAD_RATE * $info['step']);
-                static::$idList[$name]['pro_load_id'] = ($info['max_id']-$info['step']) + $pre_step;
-                //非正常关闭的 直接使用下一段id
-                if($is_abnormal){
-                    static::$idList[$name]['max_id'] = $info['max_id'] + $info['step'];
-                    static::$idList[$name]['last_id'] = $info['max_id'];
-                    //id下一段预载规则记录
-                    static::$idList[$name]['pro_load_id'] = $info['max_id'] + $pre_step;
-                }
+        static::$idList = db()->table('id_list')->idx('name')->fields('name,init_id,max_id,step,delta,last_id')->all();
+        //更新最大max_id
+        foreach (static::$idList as $name => $info) {
+            static::$idList[$name]['init_id'] = (int)$info['init_id'];
+            static::$idList[$name]['step'] = (int)$info['step'];
+            static::$idList[$name]['delta'] = (int)$info['delta'];
+            static::$idList[$name]['pro_load_id'] = ($info['max_id']-$info['step']) + intval(static::PRE_LOAD_RATE * $info['step']);
+            //非正常关闭的 直接使用下一段id
+            if($is_abnormal){
+                static::$idList[$name]['max_id'] = $info['max_id'] + $info['step'];
+                static::$idList[$name]['last_id'] = $info['max_id'];
+                //id下一段预载规则记录
+                static::$idList[$name]['pro_load_id'] = $info['max_id'] + intval(static::PRE_LOAD_RATE * $info['step']);
+
+                //更新数据
+                db()->update(['max_id' => static::$idList[$name]['max_id'], 'last_id'=>$info['max_id']], 'id_list', ['name'=>$name]);
+
             }
-            $this->isChange = true;
+            unset(static::$idList[$name]['name']);
         }
     }
 
-    public function info() {
+    public function info(){
         return static::$idList;
     }
 
     public function save(){
-        if (!$this->isChange) return;
-        $this->isChange = false;
-        file_put_contents(static::jsonFileName(), json_encode(static::$idList), LOCK_EX | LOCK_NB);
+        db()->beginTrans();
+        foreach (static::$change as $name=>$info){
+            db()->update($info, 'id_list', ['name'=>$name]);
+        }
+        db()->commit();
+        static::$change = [];
     }
 
     public function stop(){
-        $this->isChange = true;
-        $this->save();
+        //正常关闭更新数据最后id
+        db()->beginTrans();
+        foreach (static::$idList as $name=>$info){
+            db()->update(['max_id'=>$info['max_id'], 'last_id'=>$info['last_id']], 'id_list', ['name'=>$name]);
+        }
+        db()->commit();
         $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
         file_exists($lockFile) && unlink($lockFile);
     }
@@ -147,10 +156,18 @@ class IdFile implements IdGenerate
             return false;
         }
 
-        static::$idList[$name] = ['init_id' => $init_id, 'max_id' => $max_id, 'step' => $step, 'delta' => $delta, 'last_id' => $init_id];
+        $data = $info = ['init_id' => $init_id, 'max_id' => $max_id, 'step' => $step, 'delta' => $delta, 'last_id' => $init_id];
+        $data['name'] = $name;
+        $data['ctime'] = date('Y-m-d H:i:s');
+        try{
+            db()->add($data, 'id_list');
+        } catch (\Exception $e){
+            IdLib::err($e->getMessage());
+            return false;
+        }
+
+        static::$idList[$name] = $info;
         static::$idList[$name]['pro_load_id'] = $init_id + intval(static::PRE_LOAD_RATE * $step);
-        $this->isChange = true;
-        $this->save();
         return IdLib::toJson(static::$idList[$name]);
     }
 
@@ -192,19 +209,26 @@ class IdFile implements IdGenerate
                 return false;
             }
         }
+        $update = [];
         if ($step > 0) {
-            static::$idList[$name]['step'] = $step;
+            $update['step'] = $step;
         }
-        if ($max_id > 0) static::$idList[$name]['max_id'] = $max_id;
-        if ($delta > 0) static::$idList[$name]['delta'] = $delta;
+        if ($max_id > 0) $update['max_id'] = $max_id;
+        if ($delta > 0) $update['delta'] = $delta;
         if ($init_id > 0) {
-            static::$idList[$name]['init_id'] = $init_id;
-            static::$idList[$name]['last_id'] = $init_id;
-            static::$idList[$name]['pro_load_id'] = $init_id + intval(static::PRE_LOAD_RATE * $step);
+            $update['init_id'] = $init_id;
+            $update['last_id'] = $init_id;
         }
 
-        $this->isChange = true;
-        $this->save();
+        try{
+            db()->update($update, 'id_list', ['name'=>$name]);
+        } catch (\Exception $e){
+            IdLib::err($e->getMessage());
+            return false;
+        }
+
+        $init_id > 0 && $update['pro_load_id'] = $init_id + intval(static::PRE_LOAD_RATE * $step);
+        static::$idList[$name] = array_merge(static::$idList[$name], $update);
         return IdLib::toJson(static::$idList[$name]);
     }
 }
