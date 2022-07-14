@@ -39,7 +39,6 @@ class IdDb implements IdGenerate
         static::$idList[$name]['max_id'] = static::$idList[$name]['max_id'] + static::$idList[$name]['step'];
 
         static::$change[$name] = ['max_id' => static::$idList[$name]['max_id']];
-        //db()->update(['max_id' => static::$idList[$name]['max_id']], 'id_list', ['name' => $name]);
     }
 
     public function init(){
