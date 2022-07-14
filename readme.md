@@ -22,7 +22,7 @@
 ###使用   
 >http模式 
 
-    获取id /id?name=xxx[&size=x]
+    获取id /id?name=xxx[&size=x]&key=认证key
     初始id /init?name=xxx[&delta=1&step=1000&init_id=0]
 >tcp模式  
 
