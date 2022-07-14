@@ -1,5 +1,7 @@
 <?php
 namespace MyId;
+use Workerman\Connection\TcpConnection;
+
 /**
  * 公共函数类库
  * Class IdLib
@@ -27,37 +29,28 @@ class IdLib
         }
     }
 
-    public static $authKey = '';
-    public static $allowIp = '';
+    private static $authKey = '';
+    private static $authFd = [];
     /**
      * @var IdFile
      */
-    public static $idObj;
+    private static $idObj;
 
-    protected static $alarmInterval = 0;
-    protected static $alarmFail = 0;
     /**
-     * @var callable|null
+     * 信息统计
+     * @var array
      */
-    protected static $onAlarm = null;
+    private static $infoStats = [];
+
+    /**
+     * 每秒实时接收数量
+     * @var int
+     */
+    private static $realRecvNum = 0;
 
     public static function toJson($buffer)
     {
         return json_encode($buffer, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    }
-
-    /**
-     * 唯一id生成
-     * @param $name
-     * @return string len 20
-     */
-    public static function uniqId($name)
-    {
-        $m = microtime(true);
-        $time = floor($m);
-        $micro = $m - $time;
-        $rand = mt_rand(0, 99);
-        return (string)$time . ($name === '' ? (string)mt_rand(100, 999) : substr((string)crc32($name), -3)) . substr((string)$micro, 2, 5) . sprintf('%02d', $rand);
     }
 
     /**
@@ -84,104 +77,241 @@ class IdLib
     }
 
     /**
-     * 初始配置
+     * 进程启动时处理
+     * @param $worker
+     * @param $worker_id
+     * @throws \Exception
      */
-    public static function initConf()
+    public static function onWorkerStart($worker, $worker_id)
     {
-        static::$allowIp = GetC('allow_ip');
-        static::$authKey = GetC('auth_key');
+        self::$authKey = GetC('auth_key');
         if (GetC('db.name')) {
-            static::$idObj = new IdDb();
+            self::$idObj = new IdDb();
         } else {
-            static::$idObj = new IdFile();
+            self::$idObj = new IdFile();
         }
-        IdLib::$idObj->init();
+        self::$idObj->init();
 
-        static::$alarmInterval = (int)GetC('alarm_interval', 60);
-        static::$alarmFail = GetC('alarm_fail');
-        static::$onAlarm = GetC('alarm_callback');
-        if (static::$onAlarm && !is_callable(static::$onAlarm)) {
-            static::$onAlarm = null;
-        } elseif (static::$alarmFail <= 0) {
-            static::$onAlarm = null;
-        }
+        //n ms实时数据落地
+        $worker->tick(1000, function () {
+            self::$realRecvNum = 0;
+            self::$idObj->save();
+        });
     }
 
-    public static function remoteIp($con, $fd)
+    /**
+     * 终端数据进程结束时的处理
+     * @param $worker
+     * @param $worker_id
+     * @throws \Exception
+     */
+    public static function onWorkerStop($worker, $worker_id)
     {
-        if (\SrvBase::$instance->isWorkerMan) return $con->getRemoteIp();
+        self::$idObj->stop();
+    }
 
-        return $con->getClientInfo($fd)['remote_ip'];
+    /**
+     * 处理数据
+     * @param TcpConnection $con
+     * @param string $recv
+     * @param int $fd
+     * @return bool|array
+     * @throws \Exception
+     */
+    public static function onReceive($con, $recv, $fd=0)
+    {
+        self::$realRecvNum++;
+
+        if(substr($recv, 0, 3)==='GET'){
+            $url = substr($recv, 4, strpos($recv, ' ', 4) - 4);
+            return self::httpGetHandle($con, $url, $fd);
+        }
+
+        return self::handle($con, $recv, $fd);
+    }
+
+    public static function httpAuth($fd, $key=''){
+        //\Log::write($fd, 'httpFd');
+        if(isset(self::$authFd[$fd])){
+            \SrvBase::$instance->server->clearTimer(self::$authFd[$fd]);
+            unset(self::$authFd[$fd]);
+        }
+        //认证key
+        if (!self::$authKey || self::$authKey === $key) return true;
+
+        self::err('auth fail');
+        return false;
     }
 
     /**
      * tcp 认证
-     * @param $con
+     * @param TcpConnection $con
      * @param $fd
      * @param string $recv
      * @return bool|string
      */
     public static function auth($con, $fd, $recv = null)
     {
-        //优先ip
-        if (static::$allowIp) {
-            return $recv === false || \Helper::allowIp(static::remoteIp($con, $fd), static::$allowIp);
-        }
         //认证key
-        if (!static::$authKey) return true;
-
-        if (!isset(\SrvBase::$instance->auth)) {
-            \SrvBase::$instance->auth = [];
-        }
+        if (!self::$authKey) return true;
 
         //连接断开清除
         if ($recv === false) {
-            unset(\SrvBase::$instance->auth[$fd]);
-            \SrvBase::$isConsole && \SrvBase::safeEcho('clear auth '.$fd);
+            unset(self::$authFd[$fd]);
+            //\SrvBase::$isConsole && \SrvBase::safeEcho('clear auth '.$fd);
             return true;
         }
 
-        if ($recv) {
-            if (isset(\SrvBase::$instance->auth[$fd]) && \SrvBase::$instance->auth[$fd] === true) {
+        if ($recv!==null) {
+            if (isset(self::$authFd[$fd]) && self::$authFd[$fd] === true) {
                 return true;
             }
-            \SrvBase::$instance->server->clearTimer(\SrvBase::$instance->auth[$fd]);
-            if ($recv == static::$authKey) { //通过认证
-                \SrvBase::$instance->auth[$fd] = true;
+            \SrvBase::$instance->server->clearTimer(self::$authFd[$fd]);
+            if ($recv == self::$authKey) { //通过认证
+                self::$authFd[$fd] = true;
             } else {
-                static::err('auth fail');
+                unset(self::$authFd[$fd]);
+                self::err('auth fail');
                 return false;
             }
             return 'ok';
         }
 
-        //创建定时认证
-        if(!isset(\SrvBase::$instance->auth[$fd])){
-            \SrvBase::$isConsole && \SrvBase::safeEcho('auth timer ' . $fd . PHP_EOL);
-            \SrvBase::$instance->auth[$fd] = \SrvBase::$instance->server->after(1000, function () use ($con, $fd) {
-                unset(\SrvBase::$instance->auth[$fd]);
-                \SrvBase::$isConsole && \SrvBase::safeEcho('auth timeout to close ' . $fd . PHP_EOL);
-                if (\SrvBase::$instance->isWorkerMan) {
-                    $con->close();
-                } else {
-                    $con->close($fd);
-                }
+        //创建定时认证 $recv===null
+        if(!isset(self::$authFd[$fd])){
+            self::$authFd[$fd] = \SrvBase::$instance->server->after(1000, function () use ($con, $fd) {
+                //\SrvBase::$isConsole && \SrvBase::safeEcho('auth timeout to close ' . $fd . '-'. self::$authFd[$fd] . PHP_EOL);
+                //\Log::write('auth timeout to close ' . $fd . '-'. self::$authFd[$fd],'xx');
+                unset(self::$authFd[$fd]);
+                $con->close();
             });
         }
         return true;
     }
 
     /**
-     * @param \Workerman\Connection\TcpConnection|\swoole_server $con
-     * @param int $fd
-     * @param string $msg
+     * 统计信息 存储
      */
-    public static function toClose($con, $fd=0, $msg=null){
-        if (\SrvBase::$instance->isWorkerMan) {
-            $con->close($msg);
-        } else {
-            if ($msg) $con->send($fd, $msg);
-            $con->close($fd);
+    private static function info(){
+        self::$infoStats['date'] = date("Y-m-d H:i:s", time());
+        self::$infoStats['real_recv_num'] = self::$realRecvNum;
+        self::$infoStats['info'] = self::$idObj->info();
+        return self::toJson(self::$infoStats);
+    }
+
+    /**
+     * @param TcpConnection $con
+     * @param string $recv
+     * @param int $fd
+     * @return array|bool|false|string
+     * @throws \Exception
+     */
+    private static function handle($con, $recv, $fd=0){
+        //认证处理
+        $authRet = self::auth($con, $fd, $recv);
+        if (!$authRet) {
+            $con->close(self::err());
+            return false;
         }
+        if($authRet==='ok'){
+            return $con->send('ok');
+        }
+
+        if ($recv[0] == '{') { // substr($recv, 0, 1) == '{' && substr($recv, -1) == '}'
+            $data = json_decode($recv, true);
+        } else { // querystring
+            parse_str($recv, $data);
+        }
+
+        if (empty($data)) {
+            return $con->send('empty data: '.$recv);
+        }
+        if (!isset($data['a'])) $data['a'] = 'id';
+
+        $ret = 'ok'; //默认返回信息
+        switch ($data['a']) {
+            case 'id': //入列 用于消息重试
+                $ret = self::$idObj->nextId($data);
+                break;
+            case 'init':
+                $ret = self::$idObj->initId($data);
+                break;
+            case 'update':
+                $ret = self::$idObj->updateId($data);
+                break;
+            case 'info':
+                $ret = self::info();
+                break;
+            default:
+                self::err('invalid request');
+                $ret = false;
+        }
+        return $con->send($ret !== false ? $ret : self::err());
+    }
+
+    /**
+     * @param \Workerman\Connection\TcpConnection $con
+     * @param $url
+     * @param int $fd
+     * @return string
+     * @throws \Exception
+     */
+    private static function httpGetHandle($con, $url, $fd=0){
+        if (!$url) {
+            self::err('URL read failed');
+            return self::httpSend($con, false);
+        }
+        $parse = parse_url($url);
+        $data = [];
+        $path = $parse['path'];
+        if(!empty($parse['query'])){
+            parse_str($parse['query'], $data);
+        }
+
+        //认证处理
+        if (!self::httpAuth($fd, $data['key']??'')) {
+            return self::httpSend($con, false);
+        }
+
+        $ret = 'ok'; //默认返回信息
+        switch ($path) {
+            case '/id': //入列 用于消息重试
+                $ret = self::$idObj->nextId($data);
+                break;
+            case '/init':
+                $ret = self::$idObj->initId($data);
+                break;
+            case '/update':
+                $ret = self::$idObj->updateId($data);
+                break;
+            case '/info':
+                $ret = self::info();
+                break;
+            default:
+                self::err('Invalid Request '.$path);
+                $ret = false;
+        }
+
+        return self::httpSend($con, $ret);
+    }
+
+    /**
+     * @param \Workerman\Connection\TcpConnection $con
+     * @param false|string $ret
+     * @return string
+     */
+    private static function httpSend($con, $ret){
+        $code = 200;
+        $reason = 'OK';
+        if ($ret === false) {
+            $code = 400;
+            $ret = self::err();
+            $reason = 'Bad Request';
+        }
+
+        $body_len = strlen($ret);
+        $out = "HTTP/1.1 {$code} $reason\r\nServer: my-id\r\nContent-Type: text/html;charset=utf-8\r\nContent-Length: {$body_len}\r\nConnection: keep-alive\r\n\r\n{$ret}";
+        $con->close($out);
+        return '';
     }
 }

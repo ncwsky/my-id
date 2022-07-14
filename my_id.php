@@ -63,22 +63,23 @@ $conf = [
     ],
     'event' => [
         'onWorkerStart' => function ($worker, $worker_id) {
-            \MyId\IdServerIncr::onWorkerStart($worker, $worker_id);
+            \MyId\IdLib::onWorkerStart($worker, $worker_id);
         },
         'onWorkerStop' => function ($worker, $worker_id) {
-            \MyId\IdServerIncr::onWorkerStop($worker, $worker_id);
+            \MyId\IdLib::onWorkerStop($worker, $worker_id);
         },
-        'onConnect' => function ($con, $fd = 0) {
+        'onConnect' => function (\Workerman\Connection\TcpConnection $con, $fd = 0) {
             $fd = $con->id;
+            //\Log::write($fd, 'fd');
             if(!\MyId\IdLib::auth($con, $fd)){
-                \MyId\IdLib::toClose($con, $fd);
+                $con->close();
             }
         },
         'onClose' => function ($con, $fd = 0) {
             \MyId\IdLib::auth($con, $con->id, false);
         },
-        'onMessage' => function (\Workerman\Connection\ConnectionInterface $connection, $data) {
-            \MyId\IdServerIncr::onReceive($connection, $data, $connection->id);
+        'onMessage' => function (\Workerman\Connection\TcpConnection $con, $data) {
+            \MyId\IdLib::onReceive($con, $data, $con->id);
         },
     ],
     // 进程内加载的文件

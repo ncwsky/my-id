@@ -22,6 +22,7 @@ $client->onConnect = function ($client){
     $client->send('123456');
     $client->recv();
 };
+
 while (1) {
     try {
         $names = ['test','abc'];

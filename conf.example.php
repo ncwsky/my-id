@@ -12,5 +12,4 @@ $cfg = array(
     'log_size' => 4194304,// 日志文件大小限制
     'log_level' => 2,// 日志记录等级
     'auth_key' => '', // tcp认证key  连接后发送认证内容:auth_key
-    'allow_ip' => '', // 允许ip 优先于auth_key
 );
