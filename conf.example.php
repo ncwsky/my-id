@@ -1,6 +1,6 @@
 <?php
 $cfg = array(
-    'db' => [
+    '__db' => [
         'dbms' => 'mysql', //数据库
         'server' => '127.0.0.1',//数据库主机
         'name' => 'myid',    //数据库名称
