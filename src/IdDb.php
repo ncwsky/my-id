@@ -1,10 +1,9 @@
 <?php
 namespace MyId;
 
-
 class IdDb implements IdGenerate
 {
-    const ALLOW_ID_NUM = 256; //允许的id数量
+    const ALLOW_ID_NUM = 8192; //允许的id数量
     const DEF_STEP = 100000; //默认步长
     const MIN_STEP = 1000; //最小步长
     const PRE_LOAD_RATE = 0.2; //下一段id预载比率
@@ -23,7 +22,7 @@ class IdDb implements IdGenerate
      */
     protected function incrId($name){
         static::$idList[$name]['last_id'] = static::$idList[$name]['last_id'] + static::$idList[$name]['delta'];
-        if (static::$idList[$name]['last_id'] > static::$idList[$name]['pro_load_id']) { //达到预载条件
+        if (static::$idList[$name]['last_id'] > static::$idList[$name]['pre_load_id']) { //达到预载条件
             $this->toPreLoadId($name);
         }
         return (string)static::$idList[$name]['last_id'];
@@ -35,7 +34,7 @@ class IdDb implements IdGenerate
      */
     protected function toPreLoadId($name)
     {
-        static::$idList[$name]['pro_load_id'] = static::$idList[$name]['max_id'] + intval(static::PRE_LOAD_RATE * static::$idList[$name]['step']);
+        static::$idList[$name]['pre_load_id'] = static::$idList[$name]['max_id'] + intval(static::PRE_LOAD_RATE * static::$idList[$name]['step']);
         static::$idList[$name]['max_id'] = static::$idList[$name]['max_id'] + static::$idList[$name]['step'];
 
         static::$change[$name] = ['max_id' => static::$idList[$name]['max_id']];
@@ -52,13 +51,13 @@ class IdDb implements IdGenerate
             static::$idList[$name]['init_id'] = (int)$info['init_id'];
             static::$idList[$name]['step'] = (int)$info['step'];
             static::$idList[$name]['delta'] = (int)$info['delta'];
-            static::$idList[$name]['pro_load_id'] = ($info['max_id']-$info['step']) + intval(static::PRE_LOAD_RATE * $info['step']);
+            static::$idList[$name]['pre_load_id'] = ($info['max_id']-$info['step']) + intval(static::PRE_LOAD_RATE * $info['step']);
             //非正常关闭的 直接使用下一段id
-            if($is_abnormal){
+            if ($is_abnormal) {
                 static::$idList[$name]['max_id'] = $info['max_id'] + $info['step'];
                 static::$idList[$name]['last_id'] = $info['max_id'];
                 //id下一段预载规则记录
-                static::$idList[$name]['pro_load_id'] = $info['max_id'] + intval(static::PRE_LOAD_RATE * $info['step']);
+                static::$idList[$name]['pre_load_id'] = $info['max_id'] + intval(static::PRE_LOAD_RATE * $info['step']);
 
                 //更新数据
                 db()->update(['max_id' => static::$idList[$name]['max_id'], 'last_id'=>$info['max_id']], 'id_list', ['name'=>$name]);
@@ -166,7 +165,7 @@ class IdDb implements IdGenerate
         }
 
         static::$idList[$name] = $info;
-        static::$idList[$name]['pro_load_id'] = $init_id + intval(static::PRE_LOAD_RATE * $step);
+        static::$idList[$name]['pre_load_id'] = $init_id + intval(static::PRE_LOAD_RATE * $step);
         return IdLib::toJson(static::$idList[$name]);
     }
 
@@ -226,7 +225,7 @@ class IdDb implements IdGenerate
             return false;
         }
 
-        $init_id > 0 && $update['pro_load_id'] = $init_id + intval(static::PRE_LOAD_RATE * $step);
+        $init_id > 0 && $update['pre_load_id'] = $init_id + intval(static::PRE_LOAD_RATE * $step);
         static::$idList[$name] = array_merge(static::$idList[$name], $update);
         return IdLib::toJson(static::$idList[$name]);
     }

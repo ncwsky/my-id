@@ -1,5 +1,6 @@
 {
     "name": "myphps/my-id",
+    "type": "library",
     "description": "基于workerman的单进程id生成服务",
     "license": "MIT",
     "keywords": ["id"],
@@ -11,7 +12,7 @@
     },
     "autoload": {
         "psr-4": {
-            "MyId\\": "./common"
+            "MyId\\": "./src"
         }
     }
 }

@@ -3,24 +3,14 @@ namespace MyId;
 use Workerman\Connection\TcpConnection;
 
 /**
- * 公共函数类库
+ * ID生成类库
  * Class IdLib
  * @package MyId
  */
 class IdLib
 {
-    public static $myMsg = '';
-    public static $myCode = 0;
-    //消息记录
-    public static function msg($msg=null, $code=0){
-        if ($msg === null) {
-            return self::$myMsg;
-        } else {
-            self::$myMsg = $msg;
-            self::$myCode = $code;
-        }
-        return null;
-    }
+    use \MyMsg;
+
     //错误提示设置或读取
     public static function err($msg=null, $code=1){
         if ($msg === null) {
@@ -33,7 +23,7 @@ class IdLib
     private static $authKey = '';
     private static $authFd = [];
     /**
-     * @var IdFile
+     * @var IdFile|IdDb
      */
     private static $idObj;
 
@@ -64,6 +54,11 @@ class IdLib
     {
         static $lastTime = 0, $sequence = 1, $uname;
         //if (!isset($uname)) $uname = crc32(php_uname('n')) % 10 * 1000;
+        if ($worker_id < 0) $worker_id = 0;
+        elseif ($worker_id > 99) $worker_id = 99;
+        if ($p < 0) $p = 0;
+        elseif ($p > 99) $p = 99;
+
         $time = time();
         if ($time == $lastTime) {
             $sequence++; // max 99999
@@ -113,7 +108,7 @@ class IdLib
 
     /**
      * 处理数据
-     * @param TcpConnection $con
+     * @param TcpConnection|\swoole_server $con
      * @param string $recv
      * @param int $fd
      * @return bool|array
@@ -184,7 +179,7 @@ class IdLib
                 //\SrvBase::$isConsole && \SrvBase::safeEcho('auth timeout to close ' . $fd . '-'. self::$authFd[$fd] . PHP_EOL);
                 //\Log::write('auth timeout to close ' . $fd . '-'. self::$authFd[$fd],'xx');
                 unset(self::$authFd[$fd]);
-                $con->close();
+                \SrvBase::toClose($con, $fd);
             });
         }
         return true;
@@ -201,7 +196,7 @@ class IdLib
     }
 
     /**
-     * @param TcpConnection $con
+     * @param TcpConnection|\swoole_server $con
      * @param string $recv
      * @param int $fd
      * @return array|bool|false|string
@@ -211,7 +206,7 @@ class IdLib
         //认证处理
         $authRet = self::auth($con, $fd, $recv);
         if (!$authRet) {
-            $con->close(self::err());
+            \SrvBase::toClose($con, $fd, self::err());
             return false;
         }
         if($authRet==='ok'){
@@ -229,12 +224,16 @@ class IdLib
         }
         if (!isset($data['a'])) $data['a'] = 'id';
 
-        $ret = 'ok'; //默认返回信息
         switch ($data['a']) {
-            case 'id': //入列 用于消息重试
+            case 'snow': //雪花
+                $worker_id = (int)$data['worker_id'] ?? 0;
+                $p = (int)$data['p'] ?? 0;
+                $ret = self::bigId($worker_id, $p);
+                break;
+            case 'id': //获取id
                 $ret = self::$idObj->nextId($data);
                 break;
-            case 'init':
+            case 'init': //初始id
                 $ret = self::$idObj->initId($data);
                 break;
             case 'update':
@@ -247,11 +246,14 @@ class IdLib
                 self::err('invalid request');
                 $ret = false;
         }
-        return $con->send($ret !== false ? $ret : self::err());
+        if (\SrvBase::$instance->isWorkerMan) {
+            return $con->send($ret !== false ? $ret : self::err());
+        }
+        return $con->send($fd, $ret !== false ? $ret : self::err());
     }
 
     /**
-     * @param \Workerman\Connection\TcpConnection $con
+     * @param TcpConnection|\swoole_server $con
      * @param $url
      * @param int $fd
      * @return string
@@ -260,7 +262,7 @@ class IdLib
     private static function httpGetHandle($con, $url, $fd=0){
         if (!$url) {
             self::err('URL read failed');
-            return self::httpSend($con, false);
+            return self::httpSend($con, false, $fd);
         }
         $parse = parse_url($url);
         $data = [];
@@ -271,12 +273,16 @@ class IdLib
 
         //认证处理
         if (!self::httpAuth($fd, $data['key']??'')) {
-            return self::httpSend($con, false);
+            return self::httpSend($con, false, $fd);
         }
 
-        $ret = 'ok'; //默认返回信息
         switch ($path) {
-            case '/id': //入列 用于消息重试
+            case '/snow': //雪花
+                $worker_id = (int)$data['worker_id'] ?? 0;
+                $p = (int)$data['p'] ?? 0;
+                $ret = self::bigId($worker_id, $p);
+                break;
+            case '/id':
                 $ret = self::$idObj->nextId($data);
                 break;
             case '/init':
@@ -293,15 +299,16 @@ class IdLib
                 $ret = false;
         }
 
-        return self::httpSend($con, $ret);
+        return self::httpSend($con, $ret, $fd);
     }
 
     /**
-     * @param \Workerman\Connection\TcpConnection $con
+     * @param TcpConnection|\swoole_server $con
      * @param false|string $ret
+     * @param int $fd
      * @return string
      */
-    private static function httpSend($con, $ret){
+    private static function httpSend($con, $ret, $fd=0){
         $code = 200;
         $reason = 'OK';
         if ($ret === false) {
@@ -312,7 +319,7 @@ class IdLib
 
         $body_len = strlen($ret);
         $out = "HTTP/1.1 {$code} $reason\r\nServer: my-id\r\nContent-Type: text/html;charset=utf-8\r\nContent-Length: {$body_len}\r\nConnection: keep-alive\r\n\r\n{$ret}";
-        $con->close($out);
+        \SrvBase::toClose($con, $fd, $out);
         return '';
     }
 }

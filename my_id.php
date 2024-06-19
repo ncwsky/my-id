@@ -33,8 +33,13 @@ defined('MY_PHP_SRV_DIR') && require_once MY_PHP_SRV_DIR . '/Load.php';
 //解析命令参数
 GetOpt::parse('p:l:', ['help', 'port:', 'listen:']);
 //处理命令参数
+$isSwoole = GetOpt::has('s', 'swoole') || IS_SWOOLE;
 $port = (int)GetOpt::val('p', 'port', ID_PORT);
 $listen = GetOpt::val('l', 'listen', ID_LISTEN);
+//自动检测
+if (!$isSwoole && !SrvBase::workermanCheck() && defined('SWOOLE_VERSION')) {
+    $isSwoole = true;
+}
 
 if (GetOpt::has('h', 'help')) {
     echo 'Usage: php my_id.php OPTION [restart|reload|stop]
@@ -56,10 +61,16 @@ $conf = [
     'port' => $port,
     'type' => 'tcp',
     'setting' => [
+        'count' => 1,
         'protocol' => '\MyId\IdPackEof',
         'stdoutFile' => RUN_DIR . '/'.ID_NAME.'.log', //终端输出
         'pidFile' => RUN_DIR . '/.'.ID_NAME.'.pid',  //pid_file
         'logFile' => RUN_DIR . '/'.ID_NAME.'.log', //日志文件 log_file
+        'log_level' => 4, //swoole日志等级
+        'open_eof_check' => true,
+        'open_eof_split' => true,
+        'package_max_length' => MAX_INPUT_SIZE,
+        'package_eof' => "\r\n"
     ],
     'event' => [
         'onWorkerStart' => function ($worker, $worker_id) {
@@ -68,15 +79,24 @@ $conf = [
         'onWorkerStop' => function ($worker, $worker_id) {
             \MyId\IdLib::onWorkerStop($worker, $worker_id);
         },
-        'onConnect' => function (\Workerman\Connection\TcpConnection $con, $fd = 0) {
-            $fd = $con->id;
+        'onConnect' => function (\Workerman\Connection\TcpConnection $con, $fd = 0) use ($isSwoole) {
+            if (!$isSwoole) {
+                $fd = $con->id;
+            }
             //\Log::write($fd, 'fd');
             if(!\MyId\IdLib::auth($con, $fd)){
-                $con->close();
+                \SrvBase::toClose($con, $fd);
             }
         },
-        'onClose' => function ($con, $fd = 0) {
-            \MyId\IdLib::auth($con, $con->id, false);
+        'onClose' => function ($con, $fd = 0) use($isSwoole) {
+            if (!$isSwoole) {
+                $fd = $con->id;
+            }
+            \MyId\IdLib::auth($con, $fd, false);
+        },
+        'onReceive' => function (\swoole_server $server, int $fd, int $reactor_id, string $data) { //swoole tcp
+            $data = \MyId\IdPackEof::decode($data);
+            \MyId\IdLib::onReceive($server, $data, $fd);
         },
         'onMessage' => function (\Workerman\Connection\TcpConnection $con, $data) {
             \MyId\IdLib::onReceive($con, $data, $con->id);
@@ -85,16 +105,15 @@ $conf = [
     // 进程内加载的文件
     'worker_load' => [
         RUN_DIR . '/conf.php',
-        MY_PHP_DIR . '/base.php',
-        function () {
-            if(__DIR__ != RUN_DIR){
-                myphp::class_dir(__DIR__ . '/common');
-            }
-        }
+        MY_PHP_DIR . '/base.php'
     ],
 ];
 
-// 设置每个连接接收的数据包最大为64K
-\Workerman\Connection\TcpConnection::$defaultMaxPackageSize = MAX_INPUT_SIZE;
-$srv = new WorkerManSrv($conf);
+if ($isSwoole) {
+    $srv = new SwooleSrv($conf);
+} else {
+    // 设置每个连接接收的数据包最大为64K
+    \Workerman\Connection\TcpConnection::$defaultMaxPackageSize = MAX_INPUT_SIZE;
+    $srv = new WorkerManSrv($conf);
+}
 $srv->run($argv);

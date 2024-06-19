@@ -1,4 +1,4 @@
-基于workerman的单进程ID生成服务  
+基于workerman|swoole的单进程ID生成服务  
 >全局唯一数字id 最大到9223372036854775807    
 >id自增 重启可能存在id浪费  
 >支持批量获取id   
@@ -20,6 +20,9 @@
     运行 ./run.php 
 
 ###使用   
+>delta int DEFAULT 1 每次增量值  
+>step int DEFAULT 10000 步长,最小1000
+
 >http模式 
 
     获取id /id?name=xxx[&size=x]&key=认证key

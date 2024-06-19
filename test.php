@@ -13,12 +13,12 @@ $testCount = (int)GetOpt::val('n', 'num', 0);
 $host = GetOpt::val('h', 'host', '192.168.0.245:55012');
 if ($testCount <= 0) $testCount = 0;
 
-$client = TcpClient::instance();
+$client = \MyId\TcpClient::instance();
 $client->config($host);
 $client->packageEof = "\r\n";
 $run_times = 0;
 //认证
-$client->onConnect = function ($client){
+$client->onConnect = function (\MyId\TcpClient $client){
     $client->send('123456');
     $client->recv();
 };

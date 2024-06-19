@@ -582,6 +582,7 @@ class TcpClient
 }
 
 /*
+use MyId\TcpClient;
 // ==以下调用示例==
 if (PHP_SAPI == 'cli' && isset($argv[0]) && $argv[0] == basename(__FILE__)) {
     // 服务端列表

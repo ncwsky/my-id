@@ -7,5 +7,6 @@ define('VENDOR_DIR', __DIR__ . '/vendor');
 define('ID_NAME', 'my_id');
 define('ID_LISTEN', '0.0.0.0');
 define('ID_PORT', 55012);
+define('IS_SWOOLE', 0);
 
 require __DIR__. '/vendor/myphps/my-id/my_id.php';

@@ -14,7 +14,7 @@ $cmd =GetOpt::val('c', 'cmd');
 $name =GetOpt::val('n', 'name');
 $host = GetOpt::val('h', 'host', '192.168.0.245:55012');
 
-$client = TcpClient::instance('', $host);
+$client = \MyId\TcpClient::instance('', $host);
 $client->packageEof = "\r\n";
 #$cmd = 'a=init&name=abc&init_id=0&delta=1'; //自增数
 #$cmd = 'a=init&name=abc&init_id=-1&delta=2'; //奇数
