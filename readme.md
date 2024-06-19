@@ -3,7 +3,7 @@
 >id自增 重启可能存在id浪费  
 >支持批量获取id   
 >支持生成奇偶的id  
->支付http+tcp接入
+>支持http+tcp接入
 >两种id数据存储方式json文件或mysql     
 
 ###安装   

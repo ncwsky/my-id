@@ -1,4 +1,5 @@
 <?php
+namespace MyId;
 /**
  * tcp客户端
  */
@@ -253,7 +254,7 @@ class TcpClient
     {
         if ($this->onEncode) return call_user_func($this->onEncode, $buffer);
 
-        if (!is_scalar($buffer)) $buffer = json_encode($buffer, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_scalar($buffer)) $buffer = \json_encode($buffer, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
         if ($this->openEofCheck) return $this->encodeEof($buffer);
 
@@ -391,7 +392,7 @@ class TcpClient
     protected function toOnClose(){
         if ($this->onClose) {
             try {
-                \call_user_func($this->onClose, $this);
+                call_user_func($this->onClose, $this);
             } catch (\Exception $e) {
                 static::log($e);
             } catch (\Error $e) {
@@ -537,7 +538,7 @@ class TcpClient
      */
     protected function jsonRpc($method, $params)
     {
-        return json_encode([
+        return \json_encode([
             'class' => $this->serviceName,
             'method' => $method,
             'params' => $params,

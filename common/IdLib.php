@@ -19,13 +19,14 @@ class IdLib
             self::$myMsg = $msg;
             self::$myCode = $code;
         }
+        return null;
     }
     //错误提示设置或读取
     public static function err($msg=null, $code=1){
         if ($msg === null) {
             return self::$myMsg;
         } else {
-            self::msg('-'.$msg, $code);
+            return self::msg('-'.$msg, $code);
         }
     }
 
@@ -50,7 +51,7 @@ class IdLib
 
     public static function toJson($buffer)
     {
-        return json_encode($buffer, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return \json_encode($buffer, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
     /**
@@ -218,7 +219,7 @@ class IdLib
         }
 
         if ($recv[0] == '{') { // substr($recv, 0, 1) == '{' && substr($recv, -1) == '}'
-            $data = json_decode($recv, true);
+            $data = \json_decode($recv, true);
         } else { // querystring
             parse_str($recv, $data);
         }
