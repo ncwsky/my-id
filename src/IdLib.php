@@ -16,7 +16,7 @@ class IdLib
         if ($msg === null) {
             return self::$myMsg;
         } else {
-            return self::msg('-'.$msg, $code);
+            return self::msg('-'.$msg, $code); //参照redis的错误信息
         }
     }
 
@@ -74,7 +74,7 @@ class IdLib
 
     /**
      * 进程启动时处理
-     * @param $worker
+     * @param \Worker2|\swoole_server $worker
      * @param $worker_id
      * @throws \Exception
      */
@@ -141,24 +141,24 @@ class IdLib
 
     /**
      * tcp 认证
-     * @param TcpConnection $con
-     * @param $fd
+     * @param TcpConnection|\swoole_server $con
+     * @param int $fd
      * @param string $recv
      * @return bool|string
      */
-    public static function auth($con, $fd, $recv = null)
+    public static function auth($con, $fd, $recv = '')
     {
         //认证key
         if (!self::$authKey) return true;
 
         //连接断开清除
-        if ($recv === false) {
+        if ($recv === null) {
             unset(self::$authFd[$fd]);
             //\SrvBase::$isConsole && \SrvBase::safeEcho('clear auth '.$fd);
             return true;
         }
 
-        if ($recv!==null) {
+        if ($recv!=='') {
             if (isset(self::$authFd[$fd]) && self::$authFd[$fd] === true) {
                 return true;
             }
@@ -170,10 +170,10 @@ class IdLib
                 self::err('auth fail');
                 return false;
             }
-            return 'ok';
+            return null;
         }
 
-        //创建定时认证 $recv===null
+        //创建定时认证 $recv===''
         if(!isset(self::$authFd[$fd])){
             self::$authFd[$fd] = \SrvBase::$instance->server->after(1000, function () use ($con, $fd) {
                 //\SrvBase::$isConsole && \SrvBase::safeEcho('auth timeout to close ' . $fd . '-'. self::$authFd[$fd] . PHP_EOL);
@@ -188,7 +188,7 @@ class IdLib
     /**
      * 统计信息 存储
      */
-    private static function info(){
+    private static function info($names=[]){
         self::$infoStats['date'] = date("Y-m-d H:i:s", time());
         self::$infoStats['real_recv_num'] = self::$realRecvNum;
         self::$infoStats['info'] = self::$idObj->info();
@@ -205,12 +205,12 @@ class IdLib
     private static function handle($con, $recv, $fd=0){
         //认证处理
         $authRet = self::auth($con, $fd, $recv);
-        if (!$authRet) {
+        if (false === $authRet) {
             \SrvBase::toClose($con, $fd, self::err());
             return false;
         }
-        if($authRet==='ok'){
-            return $con->send('ok');
+        if ($authRet === null) {
+            return null;
         }
 
         if ($recv[0] == '{') { // substr($recv, 0, 1) == '{' && substr($recv, -1) == '}'

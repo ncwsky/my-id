@@ -2,6 +2,7 @@
 <?php
 declare(strict_types=1);
 
+require __DIR__ . '/vendor/autoload.php';
 require __DIR__ . '/conf.php';
 require __DIR__ . '/../myphp/base.php';
 require __DIR__ . '/../myphp/GetOpt.php';
@@ -12,7 +13,7 @@ require __DIR__ . '/../myphp/GetOpt.php';
 GetOpt::parse('h:c:n:', ['host:', 'cmd:', 'name:']);
 $cmd =GetOpt::val('c', 'cmd');
 $name =GetOpt::val('n', 'name');
-$host = GetOpt::val('h', 'host', '192.168.0.245:55012');
+$host = GetOpt::val('h', 'host', '192.168.0.219:55012');
 
 $client = \MyId\TcpClient::instance('', $host);
 $client->packageEof = "\r\n";
@@ -22,7 +23,6 @@ $client->packageEof = "\r\n";
 //认证
 $client->onConnect = function ($client){
     $client->send('123456');
-    $client->recv();
 };
 $cmd && $client->send($cmd);
 while (1) {

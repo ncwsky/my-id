@@ -9,7 +9,7 @@ interface IdGenerate
     const MAX_BIG_INT = 9223372036854775807;
 
     public function init();
-    public function info();
+    public function info($names=[]);
     public function save();
     public function stop();
     public function nextId($data);

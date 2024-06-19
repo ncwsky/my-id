@@ -92,7 +92,7 @@ $conf = [
             if (!$isSwoole) {
                 $fd = $con->id;
             }
-            \MyId\IdLib::auth($con, $fd, false);
+            \MyId\IdLib::auth($con, $fd, null);
         },
         'onReceive' => function (\swoole_server $server, int $fd, int $reactor_id, string $data) { //swoole tcp
             $data = \MyId\IdPackEof::decode($data);

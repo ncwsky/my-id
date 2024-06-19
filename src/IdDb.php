@@ -37,7 +37,7 @@ class IdDb implements IdGenerate
         static::$idList[$name]['pre_load_id'] = static::$idList[$name]['max_id'] + intval(static::PRE_LOAD_RATE * static::$idList[$name]['step']);
         static::$idList[$name]['max_id'] = static::$idList[$name]['max_id'] + static::$idList[$name]['step'];
 
-        static::$change[$name] = ['max_id' => static::$idList[$name]['max_id']];
+        static::$change[$name] = ['max_id' => static::$idList[$name]['max_id'], 'last_id'=>static::$idList[$name]['last_id']];
     }
 
     public function init(){
@@ -67,7 +67,7 @@ class IdDb implements IdGenerate
         }
     }
 
-    public function info(){
+    public function info($names=[]){
         return static::$idList;
     }
 
@@ -134,6 +134,7 @@ class IdDb implements IdGenerate
         }
         $name = strtolower($name);
         if (isset(static::$idList[$name])) {
+            return IdLib::toJson(static::$idList[$name]);
             IdLib::err('This ID name already exists');
             return false;
         }
@@ -145,7 +146,7 @@ class IdDb implements IdGenerate
         $step = isset($data['step']) ? (int)$data['step'] : static::DEF_STEP;
         $delta = isset($data['delta']) ? (int)$data['delta'] : 1;
         $init_id = isset($data['init_id']) ? (int)$data['init_id'] : 0;
-        if ($step < static::MIN_STEP) $step = static::DEF_STEP;
+        if ($step < static::MIN_STEP) $step = static::MIN_STEP;
         if ($delta < 1) $delta = 1;
 
         $max_id = $init_id + $step;

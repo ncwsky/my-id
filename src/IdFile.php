@@ -66,7 +66,7 @@ class IdFile implements IdGenerate
         }
     }
 
-    public function info() {
+    public function info($names=[]) {
         return static::$idList;
     }
 
@@ -126,6 +126,7 @@ class IdFile implements IdGenerate
         }
         $name = strtolower($name);
         if (isset(static::$idList[$name])) {
+            return IdLib::toJson(static::$idList[$name]);
             IdLib::err('This ID name already exists');
             return false;
         }
