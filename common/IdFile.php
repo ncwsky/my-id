@@ -50,7 +50,7 @@ class IdFile implements IdGenerate
         touch($lockFile);
 
         if(is_file(static::jsonFileName())){
-            static::$idList = (array)json_decode(file_get_contents(static::jsonFileName()), true);
+            static::$idList = (array)\json_decode(file_get_contents(static::jsonFileName()), true);
             //更新最大max_id
             foreach (static::$idList as $name => $info) {
                 $pre_step = intval(static::PRE_LOAD_RATE * $info['step']);
@@ -74,7 +74,7 @@ class IdFile implements IdGenerate
     public function save(){
         if (!$this->isChange) return;
         $this->isChange = false;
-        file_put_contents(static::jsonFileName(), json_encode(static::$idList), LOCK_EX | LOCK_NB);
+        file_put_contents(static::jsonFileName(), \json_encode(static::$idList), LOCK_EX | LOCK_NB);
     }
 
     public function stop(){
