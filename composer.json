@@ -7,8 +7,7 @@
     "minimum-stability": "dev",
     "require": {
         "php": ">=7.0",
-        "myphps/my-php-srv": "^2.0",
-        "myphps/myphp": "^1.20"
+        "myphps/my-php-srv": "^3.0"
     },
     "autoload": {
         "psr-4": {
