@@ -16,7 +16,8 @@ class IdLib
         if ($msg === null) {
             return self::$myMsg;
         } else {
-            return self::msg('-'.$msg, $code); //参照redis的错误信息
+            self::msg('-'.$msg, $code); //参照redis的错误信息
+            return null;
         }
     }
 
@@ -39,9 +40,14 @@ class IdLib
      */
     private static $realRecvNum = 0;
 
-    public static function toJson($buffer)
+    /**
+     * @param $buffer
+     * @return string|null
+     */
+    public static function toJson($buffer):?string
     {
-        return \json_encode($buffer, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $json = \json_encode($buffer, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return false === $json ? null : $json;
     }
 
     /**
@@ -52,7 +58,7 @@ class IdLib
      */
     public static function bigId($worker_id = 0, $p = 0)
     {
-        static $lastTime = 0, $sequence = 1, $uname;
+        static $lastTime = 0, $sequence = 1; //, $uname
         //if (!isset($uname)) $uname = crc32(php_uname('n')) % 10 * 1000;
         if ($worker_id < 0) $worker_id = 0;
         elseif ($worker_id > 99) $worker_id = 99;
@@ -66,7 +72,7 @@ class IdLib
             $sequence = 1;
             $lastTime = $time;
         }
-        //$uname + mt_rand(100, 999)
+        //$uname + random_int(100, 999)
         return (int)((string)$time . '000000000') + (int)((string)$sequence . '0000') + $worker_id * 100 + $p;
         return (int)sprintf('%d%05d%02d%02d', $time, $sequence, $worker_id, $p);
         return $time * 1000000000 + $sequence * 10000 + $worker_id * 100 + $p;
@@ -111,16 +117,19 @@ class IdLib
      * @param TcpConnection|\swoole_server $con
      * @param string $recv
      * @param int $fd
-     * @return bool|array
-     * @throws \Exception
+     * @return bool|null
      */
     public static function onReceive($con, $recv, $fd=0)
     {
         self::$realRecvNum++;
 
-        if(substr($recv, 0, 3)==='GET'){
+        $prefix = substr($recv, 0, 4);
+        if ($prefix === 'GET ') {
             $url = substr($recv, 4, strpos($recv, ' ', 4) - 4);
             return self::httpGetHandle($con, $url, $fd);
+        } elseif ($prefix === 'POST') {
+            self::err('Only GET requests are supported');
+            return self::httpSend($con, null, $fd);
         }
 
         return self::handle($con, $recv, $fd);
@@ -140,11 +149,11 @@ class IdLib
     }
 
     /**
-     * tcp 认证
+     * tcp认证
      * @param TcpConnection|\swoole_server $con
      * @param int $fd
      * @param string $recv
-     * @return bool|string
+     * @return bool|null
      */
     public static function auth($con, $fd, $recv = '')
     {
@@ -186,7 +195,9 @@ class IdLib
     }
 
     /**
-     * 统计信息 存储
+     * 统计信息
+     * @param array $names
+     * @return string|null
      */
     private static function info($names=[]){
         self::$infoStats['date'] = date("Y-m-d H:i:s", time());
@@ -195,12 +206,40 @@ class IdLib
         return self::toJson(self::$infoStats);
     }
 
+    private static function _run(&$data, &$ret=false){
+        switch ($data['a']) {
+            case 'snow': //雪花
+            case '/snow':
+                $worker_id = isset($data['worker_id']) ? (int)$data['worker_id'] : random_int(0,99);
+                $p = isset($data['p']) ? (int)$data['p'] : random_int(0,99);
+                $ret = self::bigId($worker_id, $p);
+                break;
+            case 'id': //获取id
+            case '/id':
+                $ret = self::$idObj->nextId($data);
+                break;
+            case 'init': //初始id
+            case '/init':
+                $ret = self::$idObj->initId($data);
+                break;
+            case 'update':
+            case '/update':
+                $ret = self::$idObj->updateId($data);
+                break;
+            case 'info':
+            case '/info':
+                $ret = self::info();
+                break;
+            default:
+                $ret = self::err('invalid request');
+        }
+    }
+
     /**
      * @param TcpConnection|\swoole_server $con
      * @param string $recv
      * @param int $fd
-     * @return array|bool|false|string
-     * @throws \Exception
+     * @return bool|null
      */
     private static function handle($con, $recv, $fd=0){
         //认证处理
@@ -220,106 +259,63 @@ class IdLib
         }
 
         if (empty($data)) {
-            return $con->send('empty data: '.$recv);
+            return \SrvBase::toSend($con, $fd, '-empty data: '.$recv);
         }
         if (!isset($data['a'])) $data['a'] = 'id';
 
-        switch ($data['a']) {
-            case 'snow': //雪花
-                $worker_id = (int)$data['worker_id'] ?? 0;
-                $p = (int)$data['p'] ?? 0;
-                $ret = self::bigId($worker_id, $p);
-                break;
-            case 'id': //获取id
-                $ret = self::$idObj->nextId($data);
-                break;
-            case 'init': //初始id
-                $ret = self::$idObj->initId($data);
-                break;
-            case 'update':
-                $ret = self::$idObj->updateId($data);
-                break;
-            case 'info':
-                $ret = self::info();
-                break;
-            default:
-                self::err('invalid request');
-                $ret = false;
-        }
-        if (\SrvBase::$instance->isWorkerMan) {
-            return $con->send($ret !== false ? $ret : self::err());
-        }
-        return $con->send($fd, $ret !== false ? $ret : self::err());
+        //处理
+        self::_run($data, $ret);
+
+        return \SrvBase::toSend($con, $fd, $ret !== null ? $ret : self::err());
     }
 
     /**
      * @param TcpConnection|\swoole_server $con
-     * @param $url
+     * @param string $url
      * @param int $fd
-     * @return string
-     * @throws \Exception
+     * @return null
      */
     private static function httpGetHandle($con, $url, $fd=0){
         if (!$url) {
             self::err('URL read failed');
-            return self::httpSend($con, false, $fd);
+            return self::httpSend($con, null, $fd);
         }
         $parse = parse_url($url);
         $data = [];
-        $path = $parse['path'];
         if(!empty($parse['query'])){
             parse_str($parse['query'], $data);
         }
+        $data['a'] = $parse['path'];
 
         //认证处理
         if (!self::httpAuth($fd, $data['key']??'')) {
-            return self::httpSend($con, false, $fd);
+            return self::httpSend($con, null, $fd);
         }
 
-        switch ($path) {
-            case '/snow': //雪花
-                $worker_id = (int)$data['worker_id'] ?? 0;
-                $p = (int)$data['p'] ?? 0;
-                $ret = self::bigId($worker_id, $p);
-                break;
-            case '/id':
-                $ret = self::$idObj->nextId($data);
-                break;
-            case '/init':
-                $ret = self::$idObj->initId($data);
-                break;
-            case '/update':
-                $ret = self::$idObj->updateId($data);
-                break;
-            case '/info':
-                $ret = self::info();
-                break;
-            default:
-                self::err('Invalid Request '.$path);
-                $ret = false;
-        }
+        //处理
+        self::_run($data, $ret);
 
         return self::httpSend($con, $ret, $fd);
     }
 
     /**
      * @param TcpConnection|\swoole_server $con
-     * @param false|string $ret
+     * @param string|null $ret
      * @param int $fd
-     * @return string
+     * @return null
      */
     private static function httpSend($con, $ret, $fd=0){
         $code = 200;
         $reason = 'OK';
-        if ($ret === false) {
-            $code = 400;
+        if ($ret === null) {
+            #$code = 400;
             $ret = self::err();
-            $reason = 'Bad Request';
+            #$reason = 'Bad Request';
         }
 
         $body_len = strlen($ret);
         $out = "HTTP/1.1 {$code} $reason\r\nServer: my-id\r\nContent-Type: text/html;charset=utf-8\r\nContent-Length: {$body_len}\r\nConnection: keep-alive\r\n\r\n{$ret}";
         \SrvBase::toClose($con, $fd, $out);
-        return '';
+        return null;
     }
 }

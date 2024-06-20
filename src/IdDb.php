@@ -15,12 +15,14 @@ class IdDb implements IdGenerate
     protected static $idList = [];
 
     protected static $change = [];
+
     /**
      * 返回自增的id
      * @param $name
      * @return string
      */
-    protected function incrId($name){
+    protected function incrId($name)
+    {
         static::$idList[$name]['last_id'] = static::$idList[$name]['last_id'] + static::$idList[$name]['delta'];
         if (static::$idList[$name]['last_id'] > static::$idList[$name]['pre_load_id']) { //达到预载条件
             $this->toPreLoadId($name);
@@ -37,10 +39,11 @@ class IdDb implements IdGenerate
         static::$idList[$name]['pre_load_id'] = static::$idList[$name]['max_id'] + intval(static::PRE_LOAD_RATE * static::$idList[$name]['step']);
         static::$idList[$name]['max_id'] = static::$idList[$name]['max_id'] + static::$idList[$name]['step'];
 
-        static::$change[$name] = ['max_id' => static::$idList[$name]['max_id'], 'last_id'=>static::$idList[$name]['last_id']];
+        static::$change[$name] = ['max_id' => static::$idList[$name]['max_id'], 'last_id' => static::$idList[$name]['last_id']];
     }
 
-    public function init(){
+    public function init()
+    {
         $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
         $is_abnormal = file_exists($lockFile);
         touch($lockFile);
@@ -51,7 +54,7 @@ class IdDb implements IdGenerate
             static::$idList[$name]['init_id'] = (int)$info['init_id'];
             static::$idList[$name]['step'] = (int)$info['step'];
             static::$idList[$name]['delta'] = (int)$info['delta'];
-            static::$idList[$name]['pre_load_id'] = ($info['max_id']-$info['step']) + intval(static::PRE_LOAD_RATE * $info['step']);
+            static::$idList[$name]['pre_load_id'] = ($info['max_id'] - $info['step']) + intval(static::PRE_LOAD_RATE * $info['step']);
             //非正常关闭的 直接使用下一段id
             if ($is_abnormal) {
                 static::$idList[$name]['max_id'] = $info['max_id'] + $info['step'];
@@ -60,31 +63,34 @@ class IdDb implements IdGenerate
                 static::$idList[$name]['pre_load_id'] = $info['max_id'] + intval(static::PRE_LOAD_RATE * $info['step']);
 
                 //更新数据
-                db()->update(['max_id' => static::$idList[$name]['max_id'], 'last_id'=>$info['max_id']], 'id_list', ['name'=>$name]);
+                db()->update(['max_id' => static::$idList[$name]['max_id'], 'last_id' => $info['max_id']], 'id_list', ['name' => $name]);
 
             }
             unset(static::$idList[$name]['name']);
         }
     }
 
-    public function info($names=[]){
+    public function info($names = [])
+    {
         return static::$idList;
     }
 
-    public function save(){
+    public function save()
+    {
         db()->beginTrans();
-        foreach (static::$change as $name=>$info){
-            db()->update($info, 'id_list', ['name'=>$name]);
+        foreach (static::$change as $name => $info) {
+            db()->update($info, 'id_list', ['name' => $name]);
         }
         db()->commit();
         static::$change = [];
     }
 
-    public function stop(){
+    public function stop()
+    {
         //正常关闭更新数据最后id
         db()->beginTrans();
-        foreach (static::$idList as $name=>$info){
-            db()->update(['max_id'=>$info['max_id'], 'last_id'=>$info['last_id']], 'id_list', ['name'=>$name]);
+        foreach (static::$idList as $name => $info) {
+            db()->update(['max_id' => $info['max_id'], 'last_id' => $info['last_id']], 'id_list', ['name' => $name]);
         }
         db()->commit();
         $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
@@ -92,19 +98,18 @@ class IdDb implements IdGenerate
     }
 
     /**
+     * 取下一段自增id
      * @param $data
-     * @return string|bool
-     * @throws \Exception
+     * @return string|null
      */
-    public function nextId($data){
+    public function nextId($data)
+    {
         if (empty($data['name'])) {
-            IdLib::err('Invalid ID name');
-            return false;
+            return IdLib::err('Invalid ID name');
         }
         $name = strtolower($data['name']);
         if (!isset(static::$idList[$name])) {
-            IdLib::err('ID name does not exist');
-            return false;
+            return IdLib::err('ID name does not exist');
         }
         $size = isset($data['size']) ? (int)$data['size'] : 1;
         if ($size < 2) return $this->incrId($name);
@@ -124,23 +129,21 @@ class IdDb implements IdGenerate
     /**
      * 初始id信息
      * @param $data
-     * @return false|array
+     * @return string|null
      */
-    public function initId($data){
+    public function initId($data)
+    {
         $name = isset($data['name']) ? trim($data['name']) : '';
         if (!$name) {
-            IdLib::err('Invalid ID name');
-            return false;
+            return IdLib::err('Invalid ID name');
         }
         $name = strtolower($name);
         if (isset(static::$idList[$name])) {
             return IdLib::toJson(static::$idList[$name]);
-            IdLib::err('This ID name already exists');
-            return false;
+            return IdLib::err('This ID name already exists');
         }
         if (count(static::$idList) >= static::ALLOW_ID_NUM) {
-            IdLib::err('已超出可设置id数');
-            return false;
+            return IdLib::err('已超出可设置id数');
         }
 
         $step = isset($data['step']) ? (int)$data['step'] : static::DEF_STEP;
@@ -151,18 +154,16 @@ class IdDb implements IdGenerate
 
         $max_id = $init_id + $step;
         if ($max_id > PHP_INT_MAX) {
-            IdLib::err('Invalid max_id['. $max_id .']!');
-            return false;
+            return IdLib::err('Invalid max_id[' . $max_id . ']!');
         }
 
         $data = $info = ['init_id' => $init_id, 'max_id' => $max_id, 'step' => $step, 'delta' => $delta, 'last_id' => $init_id];
         $data['name'] = $name;
         $data['ctime'] = date('Y-m-d H:i:s');
-        try{
+        try {
             db()->add($data, 'id_list');
-        } catch (\Exception $e){
-            IdLib::err($e->getMessage());
-            return false;
+        } catch (\Exception $e) {
+            return IdLib::err($e->getMessage());
         }
 
         static::$idList[$name] = $info;
@@ -173,17 +174,16 @@ class IdDb implements IdGenerate
     /**
      * 更新id信息
      * @param $data
-     * @return bool|false|string
+     * @return string|null
      */
-    public function updateId($data){
+    public function updateId($data)
+    {
         if (empty($data['name'])) {
-            IdLib::err('Invalid ID name');
-            return false;
+            return IdLib::err('Invalid ID name');
         }
         $name = strtolower($data['name']);
         if (!isset(static::$idList[$name])) {
-            IdLib::err('ID name does not exist');
-            return false;
+            return IdLib::err('ID name does not exist');
         }
 
         $max_id = 0;
@@ -197,15 +197,13 @@ class IdDb implements IdGenerate
             $delta = 0;
         }
         if ($init_id > 0 && $init_id < static::$idList[$name]['last_id']) {
-            IdLib::err('Invalid init_id[' . $init_id . ']!');
-            return false;
+            return IdLib::err('Invalid init_id[' . $init_id . ']!');
         }
 
         if ($init_id > 0) {
             $max_id = $init_id + ($step > 0 ? $step : static::$idList[$name]['step']);
             if ($max_id > PHP_INT_MAX) {
-                IdLib::err('Invalid max_id['. $max_id .']!');
-                return false;
+                return IdLib::err('Invalid max_id[' . $max_id . ']!');
             }
         }
         $update = [];
@@ -219,11 +217,10 @@ class IdDb implements IdGenerate
             $update['last_id'] = $init_id;
         }
 
-        try{
-            db()->update($update, 'id_list', ['name'=>$name]);
-        } catch (\Exception $e){
-            IdLib::err($e->getMessage());
-            return false;
+        try {
+            db()->update($update, 'id_list', ['name' => $name]);
+        } catch (\Exception $e) {
+            return IdLib::err($e->getMessage());
         }
 
         $init_id > 0 && $update['pre_load_id'] = $init_id + intval(static::PRE_LOAD_RATE * $step);

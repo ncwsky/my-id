@@ -15,7 +15,8 @@ class IdFile implements IdGenerate
      */
     protected static $idList = [];
 
-    protected static function jsonFileName(){
+    protected static function jsonFileName()
+    {
         return \SrvBase::$instance->runDir . '/.my_id.json';
     }
 
@@ -24,7 +25,8 @@ class IdFile implements IdGenerate
      * @param $name
      * @return string
      */
-    protected function incrId($name){
+    protected function incrId($name)
+    {
         static::$idList[$name]['last_id'] = static::$idList[$name]['last_id'] + static::$idList[$name]['delta'];
         if (static::$idList[$name]['last_id'] > static::$idList[$name]['pre_load_id']) { //达到预载条件
             $this->toPreLoadId($name);
@@ -43,17 +45,18 @@ class IdFile implements IdGenerate
         $this->isChange = true;
     }
 
-    public function init(){
+    public function init()
+    {
         $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
         $is_abnormal = file_exists($lockFile);
         touch($lockFile);
 
-        if(is_file(static::jsonFileName())){
+        if (is_file(static::jsonFileName())) {
             static::$idList = (array)\json_decode(file_get_contents(static::jsonFileName()), true);
             //更新最大max_id
             foreach (static::$idList as $name => $info) {
                 $pre_step = intval(static::PRE_LOAD_RATE * $info['step']);
-                static::$idList[$name]['pre_load_id'] = ($info['max_id']-$info['step']) + $pre_step;
+                static::$idList[$name]['pre_load_id'] = ($info['max_id'] - $info['step']) + $pre_step;
                 //非正常关闭的 直接使用下一段id
                 if ($is_abnormal) {
                     static::$idList[$name]['max_id'] = $info['max_id'] + $info['step'];
@@ -66,17 +69,20 @@ class IdFile implements IdGenerate
         }
     }
 
-    public function info($names=[]) {
+    public function info($names = [])
+    {
         return static::$idList;
     }
 
-    public function save(){
+    public function save()
+    {
         if (!$this->isChange) return;
         $this->isChange = false;
         file_put_contents(static::jsonFileName(), \json_encode(static::$idList), LOCK_EX | LOCK_NB);
     }
 
-    public function stop(){
+    public function stop()
+    {
         $this->isChange = true;
         $this->save();
         $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
@@ -84,19 +90,18 @@ class IdFile implements IdGenerate
     }
 
     /**
+     * 取下一段自增id
      * @param $data
-     * @return string|bool
-     * @throws \Exception
+     * @return string|null
      */
-    public function nextId($data){
+    public function nextId($data)
+    {
         if (empty($data['name'])) {
-            IdLib::err('Invalid ID name');
-            return false;
+            return IdLib::err('Invalid ID name');
         }
         $name = strtolower($data['name']);
         if (!isset(static::$idList[$name])) {
-            IdLib::err('ID name does not exist');
-            return false;
+            return IdLib::err('ID name does not exist');
         }
         $size = isset($data['size']) ? (int)$data['size'] : 1;
         if ($size < 2) return $this->incrId($name);
@@ -116,23 +121,21 @@ class IdFile implements IdGenerate
     /**
      * 初始id信息
      * @param $data
-     * @return false|array
+     * @return string|null
      */
-    public function initId($data){
+    public function initId($data)
+    {
         $name = isset($data['name']) ? trim($data['name']) : '';
         if (!$name) {
-            IdLib::err('Invalid ID name');
-            return false;
+            return IdLib::err('Invalid ID name');
         }
         $name = strtolower($name);
         if (isset(static::$idList[$name])) {
             return IdLib::toJson(static::$idList[$name]);
-            IdLib::err('This ID name already exists');
-            return false;
+            return IdLib::err('This ID name already exists');
         }
         if (count(static::$idList) >= static::ALLOW_ID_NUM) {
-            IdLib::err('已超出可设置id数');
-            return false;
+            return IdLib::err('已超出可设置id数');
         }
 
         $step = isset($data['step']) ? (int)$data['step'] : static::DEF_STEP;
@@ -143,8 +146,7 @@ class IdFile implements IdGenerate
 
         $max_id = $init_id + $step;
         if ($max_id > PHP_INT_MAX) {
-            IdLib::err('Invalid max_id['. $max_id .']!');
-            return false;
+            return IdLib::err('Invalid max_id[' . $max_id . ']!');
         }
 
         static::$idList[$name] = ['init_id' => $init_id, 'max_id' => $max_id, 'step' => $step, 'delta' => $delta, 'last_id' => $init_id];
@@ -157,17 +159,16 @@ class IdFile implements IdGenerate
     /**
      * 更新id信息
      * @param $data
-     * @return bool|false|string
+     * @return string|null
      */
-    public function updateId($data){
+    public function updateId($data)
+    {
         if (empty($data['name'])) {
-            IdLib::err('Invalid ID name');
-            return false;
+            return IdLib::err('Invalid ID name');
         }
         $name = strtolower($data['name']);
         if (!isset(static::$idList[$name])) {
-            IdLib::err('ID name does not exist');
-            return false;
+            return IdLib::err('ID name does not exist');
         }
 
         $max_id = 0;
@@ -181,15 +182,13 @@ class IdFile implements IdGenerate
             $delta = 0;
         }
         if ($init_id > 0 && $init_id < static::$idList[$name]['last_id']) {
-            IdLib::err('Invalid init_id[' . $init_id . ']!');
-            return false;
+            return IdLib::err('Invalid init_id[' . $init_id . ']!');
         }
 
         if ($init_id > 0) {
             $max_id = $init_id + ($step > 0 ? $step : static::$idList[$name]['step']);
             if ($max_id > PHP_INT_MAX) {
-                IdLib::err('Invalid max_id['. $max_id .']!');
-                return false;
+                return IdLib::err('Invalid max_id[' . $max_id . ']!');
             }
         }
         if ($step > 0) {
