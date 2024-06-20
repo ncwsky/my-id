@@ -25,13 +25,14 @@ defined('ID_NAME') || define('ID_NAME', 'my_id');
 defined('ID_LISTEN') || define('ID_LISTEN', '0.0.0.0');
 defined('ID_PORT') || define('ID_PORT', 55012);
 defined('MAX_INPUT_SIZE') || define('MAX_INPUT_SIZE', 65536); //接收包限制大小64k
+defined('IS_SWOOLE') || define('IS_SWOOLE', 0);
 
 require_once VENDOR_DIR . '/autoload.php';
 require_once MY_PHP_DIR . '/GetOpt.php';
 defined('MY_PHP_SRV_DIR') && require_once MY_PHP_SRV_DIR . '/Load.php';
 
 //解析命令参数
-GetOpt::parse('p:l:', ['help', 'port:', 'listen:']);
+GetOpt::parse('sp:l:', ['help', 'swoole', 'port:', 'listen:']);
 //处理命令参数
 $isSwoole = GetOpt::has('s', 'swoole') || IS_SWOOLE;
 $port = (int)GetOpt::val('p', 'port', ID_PORT);
@@ -47,7 +48,8 @@ if (GetOpt::has('h', 'help')) {
 
    --help
    -l --listen    监听地址 默认 0.0.0.0
-   -p --port      tcp端口', PHP_EOL;
+   -p --port      tcp端口
+   -s --swoole    swolle运行', PHP_EOL;
     exit(0);
 }
 if(!is_file(RUN_DIR . '/conf.php')){
@@ -79,11 +81,11 @@ $conf = [
         'onWorkerStop' => function ($worker, $worker_id) {
             \MyId\IdLib::onWorkerStop($worker, $worker_id);
         },
-        'onConnect' => function (\Workerman\Connection\TcpConnection $con, $fd = 0) use ($isSwoole) {
+        'onConnect' => function ($con, $fd = 0) use ($isSwoole) {
             if (!$isSwoole) {
                 $fd = $con->id;
             }
-            //\Log::write($fd, 'fd');
+
             if(!\MyId\IdLib::auth($con, $fd)){
                 \SrvBase::toClose($con, $fd);
             }
