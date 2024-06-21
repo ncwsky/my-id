@@ -6,7 +6,7 @@
 >支持http+tcp接入
 >两种id数据存储方式json文件或mysql     
 
-###安装   
+##安装   
     mkdir myid
     cd myid
     
@@ -19,7 +19,7 @@
     修改 run.php conf.php配置
     运行 ./run.php 
 
-###使用   
+##使用   
 >delta int DEFAULT 1 每次增量值  
 >step int DEFAULT 10000 步长,最小1000
 
@@ -32,3 +32,6 @@
 
     获取id 发送 name=xx[&size=x]+"\r\n" 
     初始id 发送 a=init&name=xxx[&delta=1&step=1000&init_id=0]+"\r\n" 
+    
+##TODO  
+数据意外被删除服务未停止的情况自动重新生成数据

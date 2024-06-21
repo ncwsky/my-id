@@ -44,15 +44,20 @@ abstract class IdAbstract
         static::$change[$name] = ['max_id' => static::$idList[$name]['max_id'], 'last_id' => static::$idList[$name]['last_id']];
     }
 
+    /**
+     * 统计信息
+     * @param array $names
+     * @return array
+     */
     public function info($names = [])
     {
+        if ($names) {
+            $ret = [];
+            foreach ($names as $name) {
+                $ret[$name] = static::$idList[$name] ?? null;
+            }
+        }
         return static::$idList;
-    }
-
-    public function stop()
-    {
-        $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
-        file_exists($lockFile) && unlink($lockFile);
     }
 
     /**
