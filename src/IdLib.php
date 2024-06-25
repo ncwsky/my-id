@@ -21,18 +21,35 @@ class IdLib
         }
     }
 
+    /**
+     * id列表记录  ['name'=>[init_id,max_id,step,delta], ...]
+     * @var array
+     */
+    public static $idList = [];
+    public static $change = [];
+    public static $add = [];
+    /*
+    public static $allow_id_num = 8192; //允许的id数量
+    public static $def_step = 100000; //默认步长
+    public static $min_step = 1000; //最小步长
+    public static $pre_load_rate = 0.2; //下一段id预载比率 0-1 越小越提前载入下段id
+    */
+    const ALLOW_ID_NUM = 8192; //允许的id数量
+    const DEF_STEP = 100000; //默认步长
+    const MIN_STEP = 1000; //最小步长
+    const PRE_LOAD_RATE = 0.2; //下一段id预载比率 []
+
+    const MAX_UNSIGNED_INT = 4294967295;
+    const MAX_INT = 2147483647;
+    const MAX_UNSIGNED_BIG_INT = 18446744073709551615;
+    const MAX_BIG_INT = 9223372036854775807;
+
     private static $authKey = '';
     private static $authFd = [];
     /**
      * @var IdFile|IdDb
      */
     private static $idObj;
-
-    /**
-     * 信息统计
-     * @var array
-     */
-    private static $infoStats = [];
 
     /**
      * 每秒实时接收数量
@@ -48,6 +65,38 @@ class IdLib
     {
         $json = \json_encode($buffer, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         return false === $json ? null : $json;
+    }
+
+    public static function init()
+    {
+        $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
+        $is_abnormal = file_exists($lockFile);
+        touch($lockFile);
+
+        self::$idList = self::$idObj->all();
+        //更新最大max_id
+        foreach (self::$idList as $name => $info) {
+            $pre_step = intval(self::PRE_LOAD_RATE * $info['step']);
+            self::$idList[$name]['init_id'] = (int)$info['init_id'];
+            self::$idList[$name]['step'] = (int)$info['step'];
+            self::$idList[$name]['delta'] = (int)$info['delta'];
+            self::$idList[$name]['pre_load_id'] = ($info['max_id'] - $info['step']) + $pre_step;
+            //非正常关闭的 直接使用下一段id
+            if ($is_abnormal) {
+                self::$idList[$name]['max_id'] = $info['max_id'] + $info['step'];
+                self::$idList[$name]['last_id'] = $info['max_id'];
+                //id下一段预载规则记录
+                self::$idList[$name]['pre_load_id'] = $info['max_id'] + $pre_step;
+
+                //变动数据
+                self::$change[$name] = ['max_id' => self::$idList[$name]['max_id'], 'last_id' => $info['max_id']];
+            }
+            unset(self::$idList[$name]['name']);
+        }
+        //更新数据
+        if (self::$change) {
+            self::$idObj->save();
+        }
     }
 
     /**
@@ -79,6 +128,195 @@ class IdLib
     }
 
     /**
+     * 初始id信息
+     * @param $data
+     * @return string|null
+     */
+    protected static function initId($data)
+    {
+        $name = isset($data['name']) ? trim($data['name']) : '';
+        if (!$name) {
+            return self::err('Invalid ID name');
+        }
+        $name = strtolower($name);
+        if (isset(self::$idList[$name])) {
+            return self::toJson(self::$idList[$name]);
+            return self::err('This ID name already exists');
+        }
+        if (count(self::$idList) >= self::ALLOW_ID_NUM) {
+            return self::err('已超出可设置id数');
+        }
+
+        $step = isset($data['step']) ? (int)$data['step'] : self::DEF_STEP;
+        $delta = isset($data['delta']) ? (int)$data['delta'] : 1;
+        $init_id = isset($data['init_id']) ? (int)$data['init_id'] : 0;
+        if ($step < self::MIN_STEP) $step = self::MIN_STEP;
+        if ($delta < 1) $delta = 1;
+
+        $max_id = $init_id + $step;
+        if ($max_id > PHP_INT_MAX) {
+            return self::err('Invalid max_id[' . $max_id . ']!');
+        }
+
+        $info = ['init_id' => $init_id, 'max_id' => $max_id, 'step' => $step, 'delta' => $delta, 'last_id' => $init_id];
+        self::$idList[$name] = $info;
+        self::$idList[$name]['pre_load_id'] = $init_id + intval(self::PRE_LOAD_RATE * $step);
+
+        $info['name'] = $name;
+        $info['ctime'] = date('Y-m-d H:i:s');
+        self::$add[$name] = $info;
+
+        try {
+            self::$idObj->save();
+        } catch (\Exception $e) {
+            return self::err($e->getMessage());
+        }
+        return self::toJson(self::$idList[$name]);
+    }
+
+    /**
+     * 返回自增的id
+     * @param $name
+     * @return string
+     */
+    protected static function incrId($name)
+    {
+        self::$idList[$name]['last_id'] = self::$idList[$name]['last_id'] + self::$idList[$name]['delta'];
+
+        //id超限成float类型数字
+        if (!is_int(self::$idList[$name]['last_id'])) {
+            return (int)self::$idList[$name]['last_id'];
+        }
+
+        if (self::$idList[$name]['last_id'] > self::$idList[$name]['pre_load_id']) { //达到预载条件
+            self::toPreLoadId($name);
+        } else {
+            self::$change[$name] = ['last_id' => self::$idList[$name]['last_id']];
+        }
+
+        return (string)self::$idList[$name]['last_id'];
+    }
+
+    /**
+     * 预载下一段id
+     * @param $name
+     */
+    protected static function toPreLoadId($name)
+    {
+        self::$idList[$name]['pre_load_id'] = self::$idList[$name]['max_id'] + intval(self::PRE_LOAD_RATE * self::$idList[$name]['step']);
+        self::$idList[$name]['max_id'] = self::$idList[$name]['max_id'] + self::$idList[$name]['step'];
+
+        self::$change[$name] = ['max_id' => self::$idList[$name]['max_id'], 'last_id' => self::$idList[$name]['last_id']];
+    }
+
+    /**
+     * 统计信息
+     * @param array $names
+     * @return string
+     */
+    public static function info($names = [])
+    {
+        if ($names) {
+            $ret = [];
+            foreach ($names as $name) {
+                $ret[$name] = self::$idList[$name] ?? null;
+            }
+            return self::toJson($ret);
+        }
+
+        $infoStats = [
+            'data' => date("Y-m-d H:i:s", time()),
+            'real_recv_num' => self::$realRecvNum,
+            'info' => self::$idList
+        ];
+        return self::toJson($infoStats);
+    }
+
+    /**
+     * 取下一段自增id
+     * @param $data
+     * @return string|null
+     */
+    public static function nextId($data)
+    {
+        if (empty($data['name'])) {
+            return self::err('Invalid ID name');
+        }
+        $name = strtolower($data['name']);
+        if (!isset(self::$idList[$name])) {
+            return self::err('ID name does not exist');
+        }
+        $size = isset($data['size']) ? (int)$data['size'] : 1;
+        if ($size < 2) return self::incrId($name);
+        if ($size > self::DEF_STEP) $size = self::DEF_STEP;
+        $idRet = '';
+        for ($i = 0; $i < $size; $i++) {
+            $id = self::incrId($name);
+            if ($idRet === '') {
+                $idRet = $id;
+            } else {
+                $idRet .= ',' . $id;
+            }
+        }
+        return $idRet;
+    }
+
+    /**
+     * 更新id信息 可用于修正id
+     * @param $data
+     * @return string|null
+     */
+    public static function updateId($data)
+    {
+        if (empty($data['name'])) {
+            return self::err('Invalid ID name');
+        }
+        $name = strtolower($data['name']);
+        if (!isset(self::$idList[$name])) {
+            return self::err('ID name does not exist');
+        }
+
+        $max_id = 0;
+        $step = isset($data['step']) ? (int)$data['step'] : 0;
+        $delta = isset($data['delta']) ? (int)$data['delta'] : 0;
+        $init_id = isset($data['init_id']) ? (int)$data['init_id'] : 0;
+        if ($step < self::MIN_STEP) {
+            $step = 0;
+        }
+        if ($delta < 1) {
+            $delta = 0;
+        }
+        if ($init_id > 0 && $init_id < self::$idList[$name]['last_id']) {
+            return self::err('Invalid init_id[' . $init_id . ']!');
+        }
+
+        if ($init_id > 0) {
+            $max_id = $init_id + ($step > 0 ? $step : self::$idList[$name]['step']);
+            if ($max_id > PHP_INT_MAX) {
+                return self::err('Invalid max_id[' . $max_id . ']!');
+            }
+        }
+        if ($step > 0) {
+            self::$idList[$name]['step'] = $step;
+        }
+        if ($max_id > 0) self::$idList[$name]['max_id'] = $max_id;
+        if ($delta > 0) self::$idList[$name]['delta'] = $delta;
+        if ($init_id > 0) {
+            self::$idList[$name]['init_id'] = $init_id;
+            self::$idList[$name]['last_id'] = $init_id;
+            self::$idList[$name]['pre_load_id'] = $init_id + intval(self::PRE_LOAD_RATE * $step);
+        }
+
+
+        self::$change[$name] = self::$idList[$name];
+        unset(self::$change[$name]['pre_load_id']);
+
+        //self::$idObj->save(); //todo save
+        return self::toJson(self::$idList[$name]);
+    }
+
+
+    /**
      * 进程启动时处理
      * @param \Worker2|\swoole_server $worker
      * @param $worker_id
@@ -92,7 +330,8 @@ class IdLib
         } else {
             self::$idObj = new IdFile();
         }
-        self::$idObj->init();
+        //初始ID数据
+        self::init();
 
         //n ms实时数据落地
         $worker->tick(1000, function () {
@@ -109,7 +348,9 @@ class IdLib
      */
     public static function onWorkerStop($worker, $worker_id)
     {
-        self::$idObj->stop();
+        self::$idObj->save(); //新增或变动的数据落地
+        $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
+        file_exists($lockFile) && unlink($lockFile);
     }
 
     /**
@@ -194,18 +435,6 @@ class IdLib
         return true;
     }
 
-    /**
-     * 统计信息
-     * @param array $names
-     * @return string|null
-     */
-    private static function info($names=[]){
-        self::$infoStats['date'] = date("Y-m-d H:i:s", time());
-        self::$infoStats['real_recv_num'] = self::$realRecvNum;
-        self::$infoStats['info'] = self::$idObj->info();
-        return self::toJson(self::$infoStats);
-    }
-
     private static function _run(&$data, &$ret=false){
         switch ($data['a']) {
             case 'snow': //雪花
@@ -216,19 +445,20 @@ class IdLib
                 break;
             case 'id': //获取id
             case '/id':
-                $ret = self::$idObj->nextId($data);
+                $ret = self::nextId($data);
                 break;
             case 'init': //初始id
             case '/init':
-                $ret = self::$idObj->initId($data);
+                $ret = self::initId($data);
                 break;
             case 'update':
             case '/update':
-                $ret = self::$idObj->updateId($data);
+                $ret = self::updateId($data);
                 break;
             case 'info':
             case '/info':
-                $ret = self::info();
+                $names = isset($data['name']) ? explode(',', $data['name']) : [];
+                $ret = self::info($names);
                 break;
             default:
                 $ret = self::err('invalid request');
