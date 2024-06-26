@@ -32,24 +32,36 @@ require_once MY_PHP_DIR . '/GetOpt.php';
 defined('MY_PHP_SRV_DIR') && require_once MY_PHP_SRV_DIR . '/Load.php';
 
 //解析命令参数
-GetOpt::parse('sp:l:', ['help', 'swoole', 'port:', 'listen:']);
+GetOpt::parse('shp:l:w:t:m:k:', ['help', 'swoole', 'port:', 'listen:', 'worker_num', 'type', 'master_host:', 'master_key:']);
 //处理命令参数
 $isSwoole = GetOpt::has('s', 'swoole') || IS_SWOOLE;
 $port = (int)GetOpt::val('p', 'port', ID_PORT);
 $listen = GetOpt::val('l', 'listen', ID_LISTEN);
+$worker_num = (int)GetOpt::val('w', 'worker_num', 1); //进程数 有此配置为从服务模式
+$type = GetOpt::val('t', 'type', 'single'); //服务类型 master主服务|worker从服务|其他为单进程
+
+//进程数
+$count = 1;
+if ($type == 'worker') $count = max(1, $worker_num);
+
+//worker_num|master都不指定时为单进程id服务
 //自动检测
 if (!$isSwoole && !SrvBase::workermanCheck() && defined('SWOOLE_VERSION')) {
     $isSwoole = true;
 }
 
 if (GetOpt::has('h', 'help')) {
-    echo 'Usage: php my_id.php OPTION [restart|reload|stop]
-   or: my_id.php OPTION [restart|reload|stop]
+    echo 'Usage: php my_id.php OPTION [restart|reload|stop][--console]
+   or: my_id.php OPTION [restart|reload|stop][--console]
 
    --help
-   -l --listen    监听地址 默认 0.0.0.0
-   -p --port      tcp端口
-   -s --swoole    swolle运行', PHP_EOL;
+   -l --listen      监听地址 默认 0.0.0.0
+   -p --port        TCP端口 默认 55012
+   -t --type        服务类型: master 主服务, worker 从服务, single 单进程服务(默认)
+   -w --worker_num  从服务进程数
+   -m --master_host 主服务地址 支持HTTP|TCP
+   -k --master_key  主服务验证key
+   -s --swoole      swolle运行', PHP_EOL, PHP_EOL;
     exit(0);
 }
 if(!is_file(RUN_DIR . '/conf.php')){
@@ -58,12 +70,12 @@ if(!is_file(RUN_DIR . '/conf.php')){
 }
 
 $conf = [
-    'name' => ID_NAME, //服务名
+    'name' => ID_NAME.'_'.$type, //服务名
     'ip' => $listen,
     'port' => $port,
     'type' => 'tcp',
     'setting' => [
-        'count' => 1,
+        'count' => $count,
         'protocol' => '\MyId\IdPackEof',
         'stdoutFile' => RUN_DIR . '/'.ID_NAME.'.log', //终端输出
         'pidFile' => RUN_DIR . '/.'.ID_NAME.'.pid',  //pid_file

@@ -66,7 +66,7 @@ class TcpClient
      * 服务端地址
      * @var array
      */
-    protected $addressArray = array();
+    protected static $addressArray = [];
 
     /**
      * 到服务端的socket连接
@@ -94,6 +94,7 @@ class TcpClient
      */
     protected $currentPackageLength = 0;
 
+    public $error = '';
     /**
      * Sets the maximum acceptable packet size for the current connection.
      *
@@ -158,12 +159,12 @@ class TcpClient
      * @param array|string $address_array
      * @return self
      */
-    public static function instance($service_name = '_default', $address_array = null)
+    public static function instance($service_name = '', $address_array = null)
     {
         if (!isset(self::$instances[$service_name])) {
             self::$instances[$service_name] = new self($service_name);
+            if ($address_array) self::config($address_array);
         }
-        if ($address_array) self::$instances[$service_name]->config($address_array);
         return self::$instances[$service_name];
     }
 
@@ -190,12 +191,12 @@ class TcpClient
      * @param array|string $address_array
      * @return array|void
      */
-    public function config($address_array = null)
+    public static function config($address_array = null)
     {
         if (!empty($address_array)) {
-            $this->addressArray = (array)$address_array;
+            self::$addressArray = (array)$address_array;
         }
-        return $this->addressArray;
+        return self::$addressArray;
     }
 
     /**
@@ -218,7 +219,7 @@ class TcpClient
 
     /**
      * 获取包长
-     * @param $recv_buffer
+     * @param string $buffer
      * @return int
      */
     public function input($buffer)
@@ -291,10 +292,12 @@ class TcpClient
     /**
      * TcpClient constructor.
      * @param string $service_name
+     * @param null|array|string $address_array
      */
-    public function __construct($service_name='_default')
+    public function __construct($service_name='', $address_array = null)
     {
         $this->serviceName = $service_name;
+        $address_array && self::config($address_array);
     }
 
     /**
@@ -303,11 +306,12 @@ class TcpClient
      */
     protected function open()
     {
+        $this->error = '';
         if ($this->socket) { // && is_resource($this->socket) && !feof($this->socket)
             return;
         }
 
-        $address = $this->type . '://' . $this->addressArray[array_rand($this->addressArray)];
+        $address = $this->type . '://' . self::$addressArray[array_rand(self::$addressArray)];
         set_error_handler(function(){});
         if ($this->async) {
             $this->socket = stream_socket_client($address, $err_no, $err_msg, 0, STREAM_CLIENT_ASYNC_CONNECT);
@@ -490,6 +494,7 @@ class TcpClient
                 //$this->close();
             }
             $this->close();
+            $this->error = $e->getMessage();
             static::log($e);
             return false;
         } catch (\Error $e) {
@@ -497,6 +502,7 @@ class TcpClient
                 //$this->close();
             }
             $this->close();
+            $this->error = $e->getMessage();
             static::log($e);
             return false;
         }
@@ -523,9 +529,11 @@ class TcpClient
         try {
             return $raw ? $read_buffer : $this->decode($read_buffer);
         } catch (\Exception $e) {
+            $this->error = $e->getMessage();
             static::log($e);
             return false;
         } catch (\Error $e) {
+            $this->error = $e->getMessage();
             static::log($e);
             return false;
         }
@@ -590,11 +598,13 @@ if (PHP_SAPI == 'cli' && isset($argv[0]) && $argv[0] == basename(__FILE__)) {
         'tcp://127.0.0.1:2015',
         'tcp://127.0.0.1:2015'
     );
+
     // 配置服务端列表
-    TcpClient::config($address_array);
+    #TcpClient::config($address_array);
 
     $uid = 567;
-    $user_client = TcpClient::instance('User');
+    $user_client = TcpClient::instance('User', $address_array);
+
     // ==同步调用==
     $ret_sync = $user_client->getInfoByUid($uid);
 

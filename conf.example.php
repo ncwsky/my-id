@@ -12,4 +12,7 @@ $cfg = array(
     'log_size' => 4194304,// 日志文件大小限制
     'log_level' => 2,// 日志记录等级
     'auth_key' => '', // tcp认证key  连接后发送认证内容:auth_key
+    'auto_init_id' => false, //自动按默认初始未配置的id
+    'master_address'=> '',
+    'master_key'=>''
 );

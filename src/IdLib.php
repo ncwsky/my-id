@@ -1,7 +1,7 @@
 <?php
 namespace MyId;
 use Workerman\Connection\TcpConnection;
-
+use myphp\Log;
 /**
  * ID生成类库
  * Class IdLib
@@ -34,6 +34,10 @@ class IdLib
     public static $min_step = 1000; //最小步长
     public static $pre_load_rate = 0.2; //下一段id预载比率 0-1 越小越提前载入下段id
     */
+    const TYPE_MASTER = 'master'; //主服务
+    const TYPE_WORKER = 'worker'; //从服务
+    const TYPE_SINGLE = 'single'; //单进程服务
+
     const ALLOW_ID_NUM = 8192; //允许的id数量
     const DEF_STEP = 100000; //默认步长
     const MIN_STEP = 1000; //最小步长
@@ -44,8 +48,20 @@ class IdLib
     const MAX_UNSIGNED_BIG_INT = 18446744073709551615;
     const MAX_BIG_INT = 9223372036854775807;
 
+    private static $autoInitId = false;
     private static $authKey = '';
     private static $authFd = [];
+    private static $type = self::TYPE_SINGLE;
+    private static $_to_init_first = true;
+    private static $masterAddress = '';
+    private static $masterKey = '';
+    private static $masterIsHttp = false;
+    /**
+     * @var null|TcpClient
+     */
+    private static $client = null;
+    private static $relayRecv = '';
+
     /**
      * @var IdFile|IdDb
      */
@@ -67,36 +83,19 @@ class IdLib
         return false === $json ? null : $json;
     }
 
-    public static function init()
+    public static function cType($type)
     {
-        $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
-        $is_abnormal = file_exists($lockFile);
-        touch($lockFile);
+        return self::$type == $type;
+    }
 
-        self::$idList = self::$idObj->all();
-        //更新最大max_id
-        foreach (self::$idList as $name => $info) {
-            $pre_step = intval(self::PRE_LOAD_RATE * $info['step']);
-            self::$idList[$name]['init_id'] = (int)$info['init_id'];
-            self::$idList[$name]['step'] = (int)$info['step'];
-            self::$idList[$name]['delta'] = (int)$info['delta'];
-            self::$idList[$name]['pre_load_id'] = ($info['max_id'] - $info['step']) + $pre_step;
-            //非正常关闭的 直接使用下一段id
-            if ($is_abnormal) {
-                self::$idList[$name]['max_id'] = $info['max_id'] + $info['step'];
-                self::$idList[$name]['last_id'] = $info['max_id'];
-                //id下一段预载规则记录
-                self::$idList[$name]['pre_load_id'] = $info['max_id'] + $pre_step;
+    public static function isMaster()
+    {
+        return self::$type == self::TYPE_MASTER;
+    }
 
-                //变动数据
-                self::$change[$name] = ['max_id' => self::$idList[$name]['max_id'], 'last_id' => $info['max_id']];
-            }
-            unset(self::$idList[$name]['name']);
-        }
-        //更新数据
-        if (self::$change) {
-            self::$idObj->save();
-        }
+    public static function isWorker()
+    {
+        return self::$type == self::TYPE_WORKER;
     }
 
     /**
@@ -131,9 +130,14 @@ class IdLib
      * 初始id信息
      * @param $data
      * @return string|null
+     * @throws \Exception
      */
     protected static function initId($data)
     {
+        if (self::isWorker()) {
+            return self::clientSend($data);
+        }
+
         $name = isset($data['name']) ? trim($data['name']) : '';
         if (!$name) {
             return self::err('Invalid ID name');
@@ -148,10 +152,11 @@ class IdLib
         }
 
         $step = isset($data['step']) ? (int)$data['step'] : self::DEF_STEP;
-        $delta = isset($data['delta']) ? (int)$data['delta'] : 1;
+        $delta = isset($data['delta']) ? (int)$data['delta'] : 1; // 1-999
         $init_id = isset($data['init_id']) ? (int)$data['init_id'] : 0;
         if ($step < self::MIN_STEP) $step = self::MIN_STEP;
         if ($delta < 1) $delta = 1;
+        if ($delta > 999) $delta = 999;
 
         $max_id = $init_id + $step;
         if ($max_id > PHP_INT_MAX) {
@@ -178,6 +183,7 @@ class IdLib
      * 返回自增的id
      * @param $name
      * @return string
+     * @throws \Exception
      */
     protected static function incrId($name)
     {
@@ -194,16 +200,46 @@ class IdLib
             self::$change[$name] = ['last_id' => self::$idList[$name]['last_id']];
         }
 
+        //达到本id段最大值 切换到下一已预载的id段 id值并重置为新的
+        if (isset(self::$idList[$name]['next_max_id']) && self::$idList[$name]['last_id'] > self::$idList[$name]['max_id']) {
+            self::$idList[$name]['max_id'] = self::$idList[$name]['next_max_id'];
+            self::$idList[$name]['last_id'] = (self::$idList[$name]['max_id'] - self::$idList[$name]['step']) + self::$idList[$name]['init_id'] + self::$idList[$name]['delta'];
+        }
+
         return (string)self::$idList[$name]['last_id'];
+    }
+
+    public static function toInit()
+    {
+        if (self::$_to_init_first) {
+            self::$_to_init_first = false;
+            return self::$idList;
+        }
+        foreach (self::$idList as $name => $info) {
+            self::toPreLoadId($name);
+        }
+        return self::$idList;
     }
 
     /**
      * 预载下一段id
      * @param $name
+     * @throws \Exception
      */
     protected static function toPreLoadId($name)
     {
+        if (self::isWorker()) {
+            $info = self::clientSend(['a' => 'toPreLoadId', 'name' => $name]);
+
+            //下一段预载判断id值
+            self::$idList[$name]['pre_load_id'] = $info['pre_load_id'];
+            //下一段预载id最大值
+            self::$idList[$name]['next_max_id'] = $info['max_id'];
+            return;
+        }
+
         self::$idList[$name]['pre_load_id'] = self::$idList[$name]['max_id'] + intval(self::PRE_LOAD_RATE * self::$idList[$name]['step']);
+        //下段最大id
         self::$idList[$name]['max_id'] = self::$idList[$name]['max_id'] + self::$idList[$name]['step'];
 
         self::$change[$name] = ['max_id' => self::$idList[$name]['max_id'], 'last_id' => self::$idList[$name]['last_id']];
@@ -236,6 +272,7 @@ class IdLib
      * 取下一段自增id
      * @param $data
      * @return string|null
+     * @throws \Exception
      */
     public static function nextId($data)
     {
@@ -244,7 +281,12 @@ class IdLib
         }
         $name = strtolower($data['name']);
         if (!isset(self::$idList[$name])) {
-            return self::err('ID name does not exist');
+            if (self::$autoInitId) {
+                $initRet = self::initId($data); //自动初始id
+                if (!$initRet) return null;
+            } else {
+                return self::err('ID name does not exist');
+            }
         }
         $size = isset($data['size']) ? (int)$data['size'] : 1;
         if ($size < 2) return self::incrId($name);
@@ -265,9 +307,13 @@ class IdLib
      * 更新id信息 可用于修正id
      * @param $data
      * @return string|null
+     * @throws \Exception
      */
     public static function updateId($data)
     {
+        if (self::isWorker()) {
+            return self::clientSend($data);
+        }
         if (empty($data['name'])) {
             return self::err('Invalid ID name');
         }
@@ -315,23 +361,105 @@ class IdLib
         return self::toJson(self::$idList[$name]);
     }
 
+    /**
+     * @param array $data
+     * @return array|string|null
+     * @throws \Exception
+     */
+    public static function clientSend($data)
+    {
+        if (self::$masterIsHttp) {
+            $data['key'] = self::$masterKey;
+            $method = $data['a'];
+            unset($data['a']);
+            $ret = \Http::curlSend(self::$masterAddress . $method, 'GET', $data, 5);
+            if (false === $ret) throw new \Exception(self::$masterAddress . ':请求失败'); //return self::err(self::$masterAddress . ':请求失败');
+        } else {
+            $ok = self::$client->send(http_build_query($data, "", "&", PHP_QUERY_RFC3986));
+            if (!$ok) throw new \Exception(self::$client->error); //return self::err(self::$client->error);
+            $ret = self::$client->recv();
+        }
+        if ($ret[0] == '-') { //失败消息
+            return self::err(substr($ret, 1));
+        }
+        return json_decode($ret, true);
+    }
 
     /**
-     * 进程启动时处理
+     * 进程启动时处理 初始ID数据
      * @param \Worker2|\swoole_server $worker
      * @param $worker_id
      * @throws \Exception
      */
     public static function onWorkerStart($worker, $worker_id)
     {
+        self::$type = \GetOpt::val('t', 'type', self::TYPE_SINGLE);
+        //配置
         self::$authKey = GetC('auth_key');
+        self::$autoInitId = GetC('auto_init_id');
+        if (self::isWorker()) {
+            $master_host = \GetOpt::val('h', 'master_host'); //优先命令输入>conf.php配置里的设置
+            $key = \GetOpt::val('k', 'master_key');
+
+            self::$masterAddress = $master_host ?: GetC('master_address');
+            self::$masterKey = $key ?: GetC('master_key');
+
+            if (!self::$masterAddress) {
+                throw new \Exception('未配置主服务地址: master_address');
+            }
+
+            Log::write('连接主服务: ' . self::$masterAddress);
+            if (substr(self::$masterAddress, 0, 4) == 'http') {
+                self::$masterIsHttp = true;
+            } else {
+                self::$masterIsHttp = false;
+                if (self::$masterIsHttp) {
+                    self::$client = \MyId\TcpClient::instance('', self::$masterAddress);
+                    self::$client->packageEof = "\r\n";
+                    self::$client->onConnect = function ($client) {
+                        self::$masterKey && $client->send(self::$masterKey);
+                    };
+                }
+            }
+            //从主服务获取id段数据
+            self::$idList = self::clientSend(['a'=>'toLoadId']);
+            return;
+        } else {
+            $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
+            $is_abnormal = file_exists($lockFile);
+            touch($lockFile);
+        }
+
         if (GetC('db.name')) {
             self::$idObj = new IdDb();
         } else {
             self::$idObj = new IdFile();
         }
-        //初始ID数据
-        self::init();
+
+        self::$idList = self::$idObj->all();
+        //更新最大max_id
+        foreach (self::$idList as $name => $info) {
+            $pre_step = intval(self::PRE_LOAD_RATE * $info['step']);
+            self::$idList[$name]['init_id'] = (int)$info['init_id'];
+            self::$idList[$name]['step'] = (int)$info['step'];
+            self::$idList[$name]['delta'] = (int)$info['delta'];
+            self::$idList[$name]['pre_load_id'] = ($info['max_id'] - $info['step']) + $pre_step;
+            //非正常关闭的 直接使用下一段id
+            if ($is_abnormal) {
+                self::$idList[$name]['max_id'] = $info['max_id'] + $info['step'];
+                self::$idList[$name]['last_id'] = $info['max_id'];
+                //id下一段预载规则记录
+                self::$idList[$name]['pre_load_id'] = $info['max_id'] + $pre_step;
+
+                //变动数据
+                self::$change[$name] = ['max_id' => self::$idList[$name]['max_id'], 'last_id' => $info['max_id']];
+            }
+            unset(self::$idList[$name]['name']);
+        }
+        //更新数据
+        if (self::$change) {
+            self::$idObj->save();
+        }
 
         //n ms实时数据落地
         $worker->tick(1000, function () {
@@ -348,6 +476,7 @@ class IdLib
      */
     public static function onWorkerStop($worker, $worker_id)
     {
+        if (self::isWorker()) return; //是从服务不用处理
         self::$idObj->save(); //新增或变动的数据落地
         $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
         file_exists($lockFile) && unlink($lockFile);
@@ -372,12 +501,12 @@ class IdLib
             self::err('Only GET requests are supported');
             return self::httpSend($con, null, $fd);
         }
-
+        //self::$relayRecv = $recv;
         return self::handle($con, $recv, $fd);
     }
 
     public static function httpAuth($fd, $key=''){
-        //\Log::write($fd, 'httpFd');
+        //Log::write($fd, 'httpFd');
         if(isset(self::$authFd[$fd])){
             \SrvBase::$instance->server->clearTimer(self::$authFd[$fd]);
             unset(self::$authFd[$fd]);
@@ -427,7 +556,7 @@ class IdLib
         if(!isset(self::$authFd[$fd])){
             self::$authFd[$fd] = \SrvBase::$instance->server->after(1000, function () use ($con, $fd) {
                 //\SrvBase::$isConsole && \SrvBase::safeEcho('auth timeout to close ' . $fd . '-'. self::$authFd[$fd] . PHP_EOL);
-                //\Log::write('auth timeout to close ' . $fd . '-'. self::$authFd[$fd],'xx');
+                //Log::write('auth timeout to close ' . $fd . '-'. self::$authFd[$fd],'xx');
                 unset(self::$authFd[$fd]);
                 \SrvBase::toClose($con, $fd);
             });
@@ -445,6 +574,10 @@ class IdLib
                 break;
             case 'id': //获取id
             case '/id':
+                if (self::isMaster()) {
+                    $ret = self::err('主服务不支持此操作');
+                    break;
+                }
                 $ret = self::nextId($data);
                 break;
             case 'init': //初始id
@@ -458,7 +591,33 @@ class IdLib
             case 'info':
             case '/info':
                 $names = isset($data['name']) ? explode(',', $data['name']) : [];
-                $ret = self::info($names);
+                if (self::isWorker() && !empty($data['master'])) { //获取主服务的信息
+                    $ret = self::clientSend($data);
+                } else {
+                    $ret = self::info($names);
+                }
+                break;
+            //主服务
+            case 'toInit':
+            case '/toInit':
+                if (!self::isMaster()) {
+                    $ret = self::err('非主服务');
+                    break;
+                }
+                $ret = self::toInit();
+                break;
+            case 'toPreLoadId':
+            case '/toPreLoadId':
+                if (!self::isMaster()) {
+                    $ret = self::err('非主服务');
+                    break;
+                }
+                $name = $data['name'];
+                self::toPreLoadId($name);
+                $ret = [
+                    'pre_load_id' => self::$idList[$name]['pre_load_id'],
+                    'max_id' => self::$idList[$name]['max_id']
+                ];
                 break;
             default:
                 $ret = self::err('invalid request');

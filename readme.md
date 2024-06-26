@@ -20,8 +20,9 @@
     运行 ./run.php 
 
 ##使用   
->delta int DEFAULT 1 每次增量值  
->step int DEFAULT 10000 步长,最小1000
+>delta int DEFAULT 1 每次增量值  范围（1-999）  
+>step int DEFAULT 100000 步长,最小1000  
+>init_id int DEFAULT 0 id初始值
 
 >http模式 
 
