@@ -304,7 +304,7 @@ class TcpClient
      * 打开到服务端的连接
      * @throws \Exception
      */
-    protected function open()
+    public function open()
     {
         $this->error = '';
         if ($this->socket) { // && is_resource($this->socket) && !feof($this->socket)
@@ -382,7 +382,7 @@ class TcpClient
      * 关闭到服务端的连接
      * @return void
      */
-    protected function close()
+    public function close()
     {
         $this->toOnClose();
         if ($this->socket) {
@@ -466,7 +466,6 @@ class TcpClient
      * @param string $data
      * @param bool $raw
      * @return bool
-     * @throws \Exception
      */
     public function send($data, $raw = false)
     {

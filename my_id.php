@@ -21,7 +21,6 @@ if (!defined('VENDOR_DIR')) {
 defined('MY_PHP_DIR') || define('MY_PHP_DIR', VENDOR_DIR . '/myphps/myphp');
 //defined('MY_PHP_SRV_DIR') || define('MY_PHP_SRV_DIR', VENDOR_DIR . '/myphps/my-php-srv');
 
-defined('ID_NAME') || define('ID_NAME', 'my_id');
 defined('ID_LISTEN') || define('ID_LISTEN', '0.0.0.0');
 defined('ID_PORT') || define('ID_PORT', 55012);
 defined('MAX_INPUT_SIZE') || define('MAX_INPUT_SIZE', 65536); //接收包限制大小64k
@@ -37,11 +36,13 @@ GetOpt::parse('shp:l:w:t:m:k:', ['help', 'swoole', 'port:', 'listen:', 'worker_n
 $isSwoole = GetOpt::has('s', 'swoole') || IS_SWOOLE;
 $port = (int)GetOpt::val('p', 'port', ID_PORT);
 $listen = GetOpt::val('l', 'listen', ID_LISTEN);
-$worker_num = (int)GetOpt::val('w', 'worker_num', 1); //进程数 有此配置为从服务模式
+$worker_num = (int)GetOpt::val('w', 'worker_num', 4); //进程数 有此配置为从服务模式
 $type = GetOpt::val('t', 'type', 'single'); //服务类型 master主服务|worker从服务|其他为单进程
 
 //进程数
 $count = 1;
+$name = 'my_id_'.$type.'_'.$port;
+define('ID_NAME', $name); //进程名
 if ($type == 'worker') $count = max(1, $worker_num);
 
 //worker_num|master都不指定时为单进程id服务
@@ -55,12 +56,12 @@ if (GetOpt::has('h', 'help')) {
    or: my_id.php OPTION [restart|reload|stop][--console]
 
    --help
-   -l --listen      监听地址 默认 0.0.0.0
-   -p --port        TCP端口 默认 55012
-   -t --type        服务类型: master 主服务, worker 从服务, single 单进程服务(默认)
-   -w --worker_num  从服务进程数
-   -m --master_host 主服务地址 支持HTTP|TCP
-   -k --master_key  主服务验证key
+   -l --listen=?      监听地址 默认 0.0.0.0
+   -p --port=?        TCP端口 默认 55012
+   -t --type=?        服务类型: master 主服务, worker 从服务, single 单进程服务(默认)
+   -w --worker_num=?  从服务进程数
+   -m --master_host=? 主服务地址 支持HTTP|TCP 示例:127.0.0.1:xxx|http://127.0.0.1:xxx
+   -k --master_key=?  主服务验证key
    -s --swoole      swolle运行', PHP_EOL, PHP_EOL;
     exit(0);
 }
@@ -70,16 +71,16 @@ if(!is_file(RUN_DIR . '/conf.php')){
 }
 
 $conf = [
-    'name' => ID_NAME.'_'.$type, //服务名
+    'name' => $name, //服务名
     'ip' => $listen,
     'port' => $port,
     'type' => 'tcp',
     'setting' => [
         'count' => $count,
         'protocol' => '\MyId\IdPackEof',
-        'stdoutFile' => RUN_DIR . '/'.ID_NAME.'.log', //终端输出
-        'pidFile' => RUN_DIR . '/.'.ID_NAME.'.pid',  //pid_file
-        'logFile' => RUN_DIR . '/'.ID_NAME.'.log', //日志文件 log_file
+        //'stdoutFile' => RUN_DIR . '/'.$name.'.log', //终端输出
+        'pidFile' => RUN_DIR . '/.'.$name.'.pid',  //pid_file
+        'logFile' => RUN_DIR . '/'.$name.'.log', //日志文件 log_file
         'log_level' => 4, //swoole日志等级
         'open_eof_check' => true,
         'open_eof_split' => true,
@@ -129,5 +130,8 @@ if ($isSwoole) {
     // 设置每个连接接收的数据包最大为64K
     \Workerman\Connection\TcpConnection::$defaultMaxPackageSize = MAX_INPUT_SIZE;
     $srv = new WorkerManSrv($conf);
+    if (!\extension_loaded('event') && !\extension_loaded('libevent') && defined('SWOOLE_VERSION')) {
+        \Worker2::$eventLoopClass = "\Workerman\Events\Swoole";
+    }
 }
 $srv->run($argv);

@@ -30,7 +30,7 @@ if($cmd && $client->send($cmd)){
 while (1) {
     $run_times++;
     try {
-        $client->send('name='.$name.'&size='.mt_rand(0, 10));
+        $client->send('name='.$name.'&size='.mt_rand(1, 30));
         $ret = $client->recv();
         //echo date("Y-m-d H:i:s") . ' recv['.$name.']: ' . $ret, PHP_EOL;
         //sleep(1);

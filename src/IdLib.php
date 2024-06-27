@@ -1,7 +1,7 @@
 <?php
 namespace MyId;
 use Workerman\Connection\TcpConnection;
-use myphp\Log;
+
 /**
  * ID生成类库
  * Class IdLib
@@ -28,12 +28,12 @@ class IdLib
     public static $idList = [];
     public static $change = [];
     public static $add = [];
-    /*
+
     public static $allow_id_num = 8192; //允许的id数量
     public static $def_step = 100000; //默认步长
     public static $min_step = 1000; //最小步长
     public static $pre_load_rate = 0.2; //下一段id预载比率 0-1 越小越提前载入下段id
-    */
+
     const TYPE_MASTER = 'master'; //主服务
     const TYPE_WORKER = 'worker'; //从服务
     const TYPE_SINGLE = 'single'; //单进程服务
@@ -98,6 +98,50 @@ class IdLib
         return self::$type == self::TYPE_WORKER;
     }
 
+    public static function checkMasterAddress(){
+        $localIps = self::localIp();
+        $localIps[] = '127.0.0.1';
+        foreach ($localIps as $ip) {
+            $address = $ip . ':' . \SrvBase::$instance->port;
+            if (strpos(self::$masterAddress, $address) !== false) {
+                return false;
+            }
+        }
+        return true;
+    }
+    public static function forWindows()
+    {
+        @exec("ipconfig", $array); #ipconfig /all
+        if ($array)
+            return $array;
+        else {
+            $ipconfig = $_SERVER["WINDIR"] . "\system32\ipconfig.exe";
+            if (is_file($ipconfig))
+                @exec($ipconfig, $array); #$ipconfig . " /all"
+            else
+                @exec($_SERVER["WINDIR"] . "\system\ipconfig.exe /all", $array);
+            return $array;
+        }
+    }
+    public static function forLinux()
+    {
+        @exec("ifconfig", $array); #ifconfig -a
+        return $array;
+    }
+    public static function localIp($loopback=true){
+        $array = DIRECTORY_SEPARATOR === '\\' ? self::forWindows() : self::forLinux();
+        $list = [];
+        foreach ($array as $v){
+            if(strpos($v,'inet')!==false || strpos($v,'IP')!==false){
+                if (preg_match("/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/", $v, $matches)) {
+                    if($matches[0]=='127.0.0.1' && !$loopback) continue;
+                    $list[] = $matches[0];
+                }
+            }
+        }
+        return $list;
+    }
+
     /**
      * id生成(每秒最多99999个id) 最多支持部署100个服务器 每个服务最多100个进程 10位时间戳+[5位$sequence+2位$worker_id+2位$p] 19位数字  //[5位$sequence+2位uname+2位rand]
      * @param int $worker_id 进程id 0-99
@@ -134,21 +178,31 @@ class IdLib
      */
     protected static function initId($data)
     {
-        if (self::isWorker()) {
-            return self::clientSend($data);
-        }
-
         $name = isset($data['name']) ? trim($data['name']) : '';
         if (!$name) {
             return self::err('Invalid ID name');
         }
         $name = strtolower($name);
         if (isset(self::$idList[$name])) {
+            //主服务存在的id自预载下一段
+            if (self::isMaster()) {
+                self::toPreLoadId($name);
+            }
             return self::toJson(self::$idList[$name]);
             return self::err('This ID name already exists');
         }
         if (count(self::$idList) >= self::ALLOW_ID_NUM) {
             return self::err('已超出可设置id数');
+        }
+
+        if (self::isWorker()) {
+            $data['a'] = str_replace('id', 'init', $data['a']); //可能是id->init
+            $ret = self::clientSend($data, $raw);
+            if (!$ret) {
+                return null;
+            }
+            self::$idList[$name] = $ret;
+            return $raw;
         }
 
         $step = isset($data['step']) ? (int)$data['step'] : self::DEF_STEP;
@@ -209,16 +263,22 @@ class IdLib
         return (string)self::$idList[$name]['last_id'];
     }
 
+    /**
+     * 主服务初始id段数据
+     * @return string|null
+     * @throws \Exception
+     */
     public static function toInit()
     {
         if (self::$_to_init_first) {
             self::$_to_init_first = false;
-            return self::$idList;
+            return self::toJson(self::$idList);
         }
         foreach (self::$idList as $name => $info) {
             self::toPreLoadId($name);
         }
-        return self::$idList;
+        self::safeEcho(self::toJson(self::$idList));
+        return self::toJson(self::$idList);
     }
 
     /**
@@ -239,9 +299,12 @@ class IdLib
         }
 
         self::$idList[$name]['pre_load_id'] = self::$idList[$name]['max_id'] + intval(self::PRE_LOAD_RATE * self::$idList[$name]['step']);
+        //更新主服务 last_id,防止子服务拿到相同的起始id
+        if (self::isMaster()) {
+            self::$idList[$name]['last_id'] = self::$idList[$name]['max_id'];
+        }
         //下段最大id
         self::$idList[$name]['max_id'] = self::$idList[$name]['max_id'] + self::$idList[$name]['step'];
-
         self::$change[$name] = ['max_id' => self::$idList[$name]['max_id'], 'last_id' => self::$idList[$name]['last_id']];
     }
 
@@ -312,7 +375,9 @@ class IdLib
     public static function updateId($data)
     {
         if (self::isWorker()) {
-            return self::clientSend($data);
+            $ret = self::clientSend($data, $raw);
+            if (!$ret) return null;
+            return $raw;
         }
         if (empty($data['name'])) {
             return self::err('Invalid ID name');
@@ -363,28 +428,44 @@ class IdLib
 
     /**
      * @param array $data
+     * @param null $rawRet
      * @return array|string|null
-     * @throws \Exception
      */
-    public static function clientSend($data)
+    public static function clientSend($data, &$rawRet=null)
     {
         if (self::$masterIsHttp) {
             $data['key'] = self::$masterKey;
             $method = $data['a'];
             unset($data['a']);
-            $ret = \Http::curlSend(self::$masterAddress . $method, 'GET', $data, 5);
-            if (false === $ret) throw new \Exception(self::$masterAddress . ':请求失败'); //return self::err(self::$masterAddress . ':请求失败');
+            $rawRet = \Http::curlSend(self::$masterAddress . $method, 'GET', $data, 5);
+            if (false === $rawRet) {
+                return self::err(self::$masterAddress . ':请求失败');
+                //throw new \Exception(self::$masterAddress . ':请求失败');
+            }
         } else {
             $ok = self::$client->send(http_build_query($data, "", "&", PHP_QUERY_RFC3986));
-            if (!$ok) throw new \Exception(self::$client->error); //return self::err(self::$client->error);
-            $ret = self::$client->recv();
+            if (!$ok) {
+                return self::err(self::$client->error);
+                //throw new \Exception(self::$client->error);
+            }
+            $rawRet = self::$client->recv();
         }
-        if ($ret[0] == '-') { //失败消息
-            return self::err(substr($ret, 1));
+        if ($rawRet[0] == '-') { //失败消息
+            return self::err(substr($rawRet, 1));
         }
-        return json_decode($ret, true);
+        return json_decode($rawRet, true);
     }
 
+    /**
+     * Safe Echo.
+     * @param string $msg
+     * @param bool $micro
+     */
+    public static function safeEcho($msg, $micro=false)
+    {
+        \SrvBase::safeEcho(($micro?date('Y-m-d H:i:s') . '.' . substr(microtime(), 2, 3).' ':'').$msg.PHP_EOL);
+        !\SrvBase::$isConsole && \SrvBase::log($msg);
+    }
     /**
      * 进程启动时处理 初始ID数据
      * @param \Worker2|\swoole_server $worker
@@ -397,7 +478,8 @@ class IdLib
         //配置
         self::$authKey = GetC('auth_key');
         self::$autoInitId = GetC('auto_init_id');
-        if (self::isWorker()) {
+
+        if (self::isWorker()) { //从服务模式
             $master_host = \GetOpt::val('h', 'master_host'); //优先命令输入>conf.php配置里的设置
             $key = \GetOpt::val('k', 'master_key');
 
@@ -405,27 +487,41 @@ class IdLib
             self::$masterKey = $key ?: GetC('master_key');
 
             if (!self::$masterAddress) {
-                throw new \Exception('未配置主服务地址: master_address');
+                self::safeEcho('未配置主服务地址: master_address');
+                \SrvBase::$instance->stop();
+            }
+            if (!self::checkMasterAddress()) {
+                self::safeEcho('主服务地址无效，与当前服务冲突: '.self::$masterAddress);
+                \SrvBase::$instance->stop();
             }
 
-            Log::write('连接主服务: ' . self::$masterAddress);
+            self::safeEcho('连接主服务: ' . self::$masterAddress);
             if (substr(self::$masterAddress, 0, 4) == 'http') {
                 self::$masterIsHttp = true;
             } else {
                 self::$masterIsHttp = false;
-                if (self::$masterIsHttp) {
-                    self::$client = \MyId\TcpClient::instance('', self::$masterAddress);
-                    self::$client->packageEof = "\r\n";
-                    self::$client->onConnect = function ($client) {
-                        self::$masterKey && $client->send(self::$masterKey);
-                    };
+                self::$client = \MyId\TcpClient::instance('', self::$masterAddress);
+                self::$client->packageEof = "\r\n";
+                self::$client->onConnect = function (TcpClient $client) {
+                    self::$masterKey && $client->send(self::$masterKey);
+                    //从主服务获取id段数据
+                    self::$idList = self::clientSend(['a' => 'toInit']);
+                    if (self::$idList === null) {
+                        self::safeEcho('从主服务获取id段数据失败:'.self::err());
+                        \SrvBase::$instance->stop();
+                    }
+                };
+                try {
+                    self::$client->open();
+                    self::safeEcho('连接成功');
+                } catch (\Exception $e) {
+                    self::safeEcho($e->getMessage());
+                    \SrvBase::$instance->stop();
                 }
             }
-            //从主服务获取id段数据
-            self::$idList = self::clientSend(['a'=>'toLoadId']);
             return;
         } else {
-            $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
+            $lockFile = \SrvBase::$instance->runDir . '/'.ID_NAME.'.lock';
             $is_abnormal = file_exists($lockFile);
             touch($lockFile);
         }
@@ -478,7 +574,7 @@ class IdLib
     {
         if (self::isWorker()) return; //是从服务不用处理
         self::$idObj->save(); //新增或变动的数据落地
-        $lockFile = \SrvBase::$instance->runDir . '/my_id.lock';
+        $lockFile = \SrvBase::$instance->runDir . '/'.ID_NAME.'.lock';
         file_exists($lockFile) && unlink($lockFile);
     }
 
@@ -491,7 +587,13 @@ class IdLib
      */
     public static function onReceive($con, $recv, $fd=0)
     {
-        self::$realRecvNum++;
+        if (!self::isWorker()) self::$realRecvNum++;
+
+        //记录主服务日志
+        if (self::isMaster()) {
+            $remote = \SrvBase::$instance->clientInfo($fd, $con);
+            self::safeEcho($remote['remote_ip'].':'.$remote['remote_port'] . ':<-' . $recv, true);
+        }
 
         $prefix = substr($recv, 0, 4);
         if ($prefix === 'GET ') {
@@ -564,63 +666,67 @@ class IdLib
         return true;
     }
 
-    private static function _run(&$data, &$ret=false){
+    /**
+     * @param array $data
+     * @param null|string $raw
+     */
+    private static function _run(&$data, &$raw=null){
         switch ($data['a']) {
             case 'snow': //雪花
             case '/snow':
                 $worker_id = isset($data['worker_id']) ? (int)$data['worker_id'] : random_int(0,99);
                 $p = isset($data['p']) ? (int)$data['p'] : random_int(0,99);
-                $ret = self::bigId($worker_id, $p);
+                $raw = self::bigId($worker_id, $p);
                 break;
             case 'id': //获取id
             case '/id':
                 if (self::isMaster()) {
-                    $ret = self::err('主服务不支持此操作');
+                    $raw = self::err('主服务不支持此操作');
                     break;
                 }
-                $ret = self::nextId($data);
+                $raw = self::nextId($data);
                 break;
             case 'init': //初始id
             case '/init':
-                $ret = self::initId($data);
+                $raw = self::initId($data);
                 break;
             case 'update':
             case '/update':
-                $ret = self::updateId($data);
+                $raw = self::updateId($data);
                 break;
             case 'info':
             case '/info':
                 $names = isset($data['name']) ? explode(',', $data['name']) : [];
                 if (self::isWorker() && !empty($data['master'])) { //获取主服务的信息
-                    $ret = self::clientSend($data);
+                    self::clientSend($data, $raw);
                 } else {
-                    $ret = self::info($names);
+                    $raw = self::info($names);
                 }
                 break;
             //主服务
             case 'toInit':
             case '/toInit':
                 if (!self::isMaster()) {
-                    $ret = self::err('非主服务');
-                    break;
+                    $raw = self::err('非主服务');
+                } else {
+                    $raw = self::toInit();
                 }
-                $ret = self::toInit();
                 break;
             case 'toPreLoadId':
             case '/toPreLoadId':
                 if (!self::isMaster()) {
-                    $ret = self::err('非主服务');
+                    $raw = self::err('非主服务');
                     break;
                 }
                 $name = $data['name'];
                 self::toPreLoadId($name);
-                $ret = [
+                $raw = self::toJson([
                     'pre_load_id' => self::$idList[$name]['pre_load_id'],
                     'max_id' => self::$idList[$name]['max_id']
-                ];
+                ]);
                 break;
             default:
-                $ret = self::err('invalid request');
+                $raw = self::err('invalid request');
         }
     }
 
@@ -646,16 +752,21 @@ class IdLib
         } else { // querystring
             parse_str($recv, $data);
         }
-
         if (empty($data)) {
             return \SrvBase::toSend($con, $fd, '-empty data: '.$recv);
         }
         if (!isset($data['a'])) $data['a'] = 'id';
 
         //处理
-        self::_run($data, $ret);
+        self::_run($data, $raw);
 
-        return \SrvBase::toSend($con, $fd, $ret !== null ? $ret : self::err());
+        //记录主服务日志
+        if (self::isMaster()) {
+            $remote = \SrvBase::$instance->clientInfo($fd, $con);
+            self::safeEcho($remote['remote_ip'].':'.$remote['remote_port'] . ':->' . $raw, true);
+        }
+
+        return \SrvBase::toSend($con, $fd, $raw !== null ? $raw : self::err());
     }
 
     /**
@@ -682,9 +793,15 @@ class IdLib
         }
 
         //处理
-        self::_run($data, $ret);
+        self::_run($data, $raw);
 
-        return self::httpSend($con, $ret, $fd);
+        //记录主服务日志
+        if (self::isMaster()) {
+            $remote = \SrvBase::$instance->clientInfo($fd, $con);
+            self::safeEcho($remote['remote_ip'].':'.$remote['remote_port'] . ':->' . $raw, true);
+        }
+
+        return self::httpSend($con, $raw, $fd);
     }
 
     /**

@@ -5,7 +5,7 @@ class IdFile implements IdGenerate
 {
     protected static function jsonFileName()
     {
-        return \SrvBase::$instance->runDir . '/.my_id.json';
+        return \SrvBase::$instance->runDir . '/.'.ID_NAME.'.json';
     }
 
     public function all(): array
