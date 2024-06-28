@@ -13,6 +13,7 @@ $cfg = array(
     'log_level' => 2,// 日志记录等级
     'auth_key' => '', // tcp认证key  连接后发送认证内容:auth_key
     'auto_init_id' => false, //自动按默认初始未配置的id
+    'snow_data_id' => -1, //雪花生成中心id[0-9] -1随机
     'master_address'=> '',
     'master_key'=>''
 );

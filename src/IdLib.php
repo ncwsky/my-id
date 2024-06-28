@@ -49,6 +49,7 @@ class IdLib
     const MAX_BIG_INT = 9223372036854775807;
 
     private static $autoInitId = false;
+    private static $snowDataId = -1;
     private static $authKey = '';
     private static $authFd = [];
     private static $type = self::TYPE_SINGLE;
@@ -143,31 +144,31 @@ class IdLib
     }
 
     /**
-     * id生成(每秒最多99999个id) 最多支持部署100个服务器 每个服务最多100个进程 10位时间戳+[5位$sequence+2位$worker_id+2位$p] 19位数字  //[5位$sequence+2位uname+2位rand]
+     * id生成(每秒最多999999个id) 最多支持部署100个服务器 每个服务最多100个进程 10位时间戳+[5位$sequence+2位$worker_id+2位$p] 19位数字  //[6位$sequence+2位uname+2位rand]
      * @param int $worker_id 进程id 0-99
-     * @param int $p 服务器区分值 0-99
-     * @return int 8字节长整形
+     * @param int $p 服务器区分值 0-9
+     * @return string
      */
     public static function bigId($worker_id = 0, $p = 0)
     {
         static $lastTime = 0, $sequence = 1; //, $uname
         //if (!isset($uname)) $uname = crc32(php_uname('n')) % 10 * 1000;
-        if ($worker_id < 0) $worker_id = 0;
-        elseif ($worker_id > 99) $worker_id = 99;
-        if ($p < 0) $p = 0;
-        elseif ($p > 99) $p = 99;
+        if ($worker_id < 0) $worker_id = mt_rand(0, 99);
+        elseif ($worker_id > 99) $worker_id = mt_rand(0, 99);
+        if ($p < 0) $p = mt_rand(0, 9);
+        elseif ($p > 9) $p = mt_rand(0, 9);
 
         $time = time();
         if ($time == $lastTime) {
-            $sequence++; // max 99999
+            $sequence++; // max 999999
+            if ($sequence > 999999) return '0';
         } else {
             $sequence = 1;
             $lastTime = $time;
         }
+        $id = $time . str_pad((string)$sequence, '6', '0', STR_PAD_LEFT) . ($worker_id < 10 ? '0' : '') . $worker_id . $p;
+        return $id;
         //$uname + random_int(100, 999)
-        return (int)((string)$time . '000000000') + (int)((string)$sequence . '0000') + $worker_id * 100 + $p;
-        return (int)sprintf('%d%05d%02d%02d', $time, $sequence, $worker_id, $p);
-        return $time * 1000000000 + $sequence * 10000 + $worker_id * 100 + $p;
     }
 
     /**
@@ -476,8 +477,9 @@ class IdLib
     {
         self::$type = \GetOpt::val('t', 'type', self::TYPE_SINGLE);
         //配置
-        self::$authKey = GetC('auth_key');
-        self::$autoInitId = GetC('auto_init_id');
+        self::$authKey = GetC('auth_key', '');
+        self::$autoInitId = GetC('auto_init_id', false);
+        self::$snowDataId = GetC('snow_data_id', -1);
 
         if (self::isWorker()) { //从服务模式
             $master_host = \GetOpt::val('h', 'master_host'); //优先命令输入>conf.php配置里的设置
@@ -674,9 +676,28 @@ class IdLib
         switch ($data['a']) {
             case 'snow': //雪花
             case '/snow':
-                $worker_id = isset($data['worker_id']) ? (int)$data['worker_id'] : random_int(0,99);
-                $p = isset($data['p']) ? (int)$data['p'] : random_int(0,99);
-                $raw = self::bigId($worker_id, $p);
+                if (self::isWorker()) {
+                    $worker_id = isset($data['worker_id']) ? (int)$data['worker_id'] : \SrvBase::$instance->workerId();
+                } else { //单进程和主服务使用随机id
+                    $worker_id = random_int(0, 99);
+                }
+                $p = isset($data['p']) ? (int)$data['p'] : self::$snowDataId; //random_int(0,9);
+
+                $size = isset($data['size']) ? (int)$data['size'] : 1;
+                if ($size < 2) {
+                    $raw = self::bigId($worker_id, $p);
+                } else {
+                    if ($size > self::DEF_STEP) $size = self::DEF_STEP;
+                    $raw = '';
+                    for ($i = 0; $i < $size; $i++) {
+                        $id = self::bigId($worker_id, $p);
+                        if ($raw === '') {
+                            $raw = $id;
+                        } else {
+                            $raw .= ',' . $id;
+                        }
+                    }
+                }
                 break;
             case 'id': //获取id
             case '/id':
