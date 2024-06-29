@@ -527,9 +527,9 @@ class IdLib
             }
             return;
         } else {
-            $lockFile = \SrvBase::$instance->runDir . '/'.ID_NAME.'.lock';
-            $is_abnormal = file_exists($lockFile);
-            touch($lockFile);
+            //$lockFile = \SrvBase::$instance->runDir . '/'.ID_NAME.'.lock';
+            //$is_abnormal = file_exists($lockFile);
+            //touch($lockFile);
         }
 
         if (GetC('db.name')) {
@@ -546,6 +546,7 @@ class IdLib
             self::$idList[$name]['step'] = (int)$info['step'];
             self::$idList[$name]['delta'] = (int)$info['delta'];
             self::$idList[$name]['pre_load_id'] = ($info['max_id'] - $info['step']) + $pre_step;
+            /*  //使用了预载id+定时落地数据 异常关闭重启后可不必更新为下一段id
             //非正常关闭的 直接使用下一段id
             if ($is_abnormal) {
                 self::$idList[$name]['max_id'] = $info['max_id'] + $info['step'];
@@ -555,7 +556,7 @@ class IdLib
 
                 //变动数据
                 self::$change[$name] = ['max_id' => self::$idList[$name]['max_id'], 'last_id' => $info['max_id']];
-            }
+            }*/
             unset(self::$idList[$name]['name']);
         }
         //更新数据
@@ -580,8 +581,8 @@ class IdLib
     {
         if (self::isWorker()) return; //是从服务不用处理
         self::$idObj->save(); //新增或变动的数据落地
-        $lockFile = \SrvBase::$instance->runDir . '/'.ID_NAME.'.lock';
-        file_exists($lockFile) && unlink($lockFile);
+        //$lockFile = \SrvBase::$instance->runDir . '/'.ID_NAME.'.lock';
+        //file_exists($lockFile) && unlink($lockFile);
     }
 
     /**
