@@ -50,6 +50,7 @@ class IdLib
 
     private static $autoInitId = false;
     private static $snowDataId = -1;
+    public static $snowStartDiff = 0;
     private static $authKey = '';
     private static $authFd = [];
     private static $type = self::TYPE_SINGLE;
@@ -144,8 +145,8 @@ class IdLib
     }
 
     /**
-     * id生成(每秒最多999999个id) 最多支持部署100个服务器 每个服务最多100个进程 10位时间戳+[5位$sequence+2位$worker_id+2位$p] 19位数字  //[6位$sequence+2位uname+2位rand]
-     * @param int $worker_id 进程id 0-99
+     * id生成(每毫秒最多9999个id) 最多支持部署9个服务器 每个服务最多10个进程 13位时间戳毫秒+[4位$sequence+1位$worker_id+1位$p] 19位数字
+     * @param int $worker_id 进程id 0-9
      * @param int $p 服务器区分值 0-9
      * @return string
      */
@@ -153,21 +154,23 @@ class IdLib
     {
         static $lastTime = 0, $sequence = 1; //, $uname
         //if (!isset($uname)) $uname = crc32(php_uname('n')) % 10 * 1000;
-        if ($worker_id < 0) $worker_id = mt_rand(0, 99);
-        elseif ($worker_id > 99) $worker_id = mt_rand(0, 99);
+        if ($worker_id < 0) $worker_id = mt_rand(0, 9);
+        elseif ($worker_id > 9) $worker_id = (int)$worker_id % 9;
         if ($p < 0) $p = mt_rand(0, 9);
-        elseif ($p > 9) $p = mt_rand(0, 9);
+        elseif ($p > 9) $p = (int)$p % 9;
 
-        $time = time();
+        $time = (int)(microtime(true)*1000); //time(); 使用毫秒
+        if (self::$snowStartDiff > 0) {
+            $time = $time - self::$snowStartDiff;
+        }
         if ($time == $lastTime) {
-            $sequence++; // max 999999
-            if ($sequence > 999999) return '0';
+            $sequence++; // max 9999
+            if ($sequence > 9999) return '0';
         } else {
             $sequence = 1;
             $lastTime = $time;
         }
-        $id = $time . str_pad((string)$sequence, '6', '0', STR_PAD_LEFT) . ($worker_id < 10 ? '0' : '') . $worker_id . $p;
-        return $id;
+        return $time . str_pad((string)$sequence, '4', '0', STR_PAD_LEFT) . $worker_id . $p;
         //$uname + random_int(100, 999)
     }
 
@@ -480,6 +483,7 @@ class IdLib
         self::$authKey = GetC('auth_key', '');
         self::$autoInitId = GetC('auto_init_id', false);
         self::$snowDataId = GetC('snow_data_id', -1);
+        self::$snowStartDiff = GetC('snow_start_diff', 0);
 
         if (self::isWorker()) { //从服务模式
             $master_host = \GetOpt::val('h', 'master_host'); //优先命令输入>conf.php配置里的设置
@@ -591,12 +595,6 @@ class IdLib
     {
         if (!self::isWorker()) self::$realRecvNum++;
 
-        //记录主服务日志
-        if (self::isMaster()) {
-            $remote = \SrvBase::$instance->clientInfo($fd, $con);
-            self::safeEcho($remote['remote_ip'].':'.$remote['remote_port'] . ':<-' . $recv, true);
-        }
-
         $prefix = substr($recv, 0, 4);
         if ($prefix === 'GET ') {
             $url = substr($recv, 4, strpos($recv, ' ', 4) - 4);
@@ -679,9 +677,9 @@ class IdLib
                 if (self::isWorker()) {
                     $worker_id = isset($data['worker_id']) ? (int)$data['worker_id'] : \SrvBase::$instance->workerId();
                 } else { //单进程和主服务使用随机id
-                    $worker_id = random_int(0, 99);
+                    $worker_id = random_int(0, 7);
                 }
-                $p = isset($data['p']) ? (int)$data['p'] : self::$snowDataId; //random_int(0,9);
+                $p = isset($data['p']) ? (int)$data['p'] : self::$snowDataId; //random_int(0,7);
 
                 $size = isset($data['size']) ? (int)$data['size'] : 1;
                 if ($size < 2) {
@@ -758,6 +756,12 @@ class IdLib
      * @return bool|null
      */
     private static function handle($con, $recv, $fd=0){
+        //记录主服务日志
+        if (self::isMaster()) {
+            $remote = \SrvBase::$instance->clientInfo($fd, $con);
+            self::safeEcho($remote['remote_ip'].':'.$remote['remote_port'] . ':<-' . $recv, true);
+        }
+
         //认证处理
         $authRet = self::auth($con, $fd, $recv);
         if (false === $authRet) {
@@ -783,7 +787,6 @@ class IdLib
 
         //记录主服务日志
         if (self::isMaster()) {
-            $remote = \SrvBase::$instance->clientInfo($fd, $con);
             self::safeEcho($remote['remote_ip'].':'.$remote['remote_port'] . ':->' . $raw, true);
         }
 
@@ -797,6 +800,12 @@ class IdLib
      * @return null
      */
     private static function httpGetHandle($con, $url, $fd=0){
+        //记录主服务日志
+        if (self::isMaster()) {
+            $remote = \SrvBase::$instance->clientInfo($fd, $con);
+            self::safeEcho($remote['remote_ip'].':'.$remote['remote_port'] . ':<-' . $url, true);
+        }
+
         if (!$url) {
             self::err('URL read failed');
             return self::httpSend($con, null, $fd);
@@ -818,7 +827,6 @@ class IdLib
 
         //记录主服务日志
         if (self::isMaster()) {
-            $remote = \SrvBase::$instance->clientInfo($fd, $con);
             self::safeEcho($remote['remote_ip'].':'.$remote['remote_port'] . ':->' . $raw, true);
         }
 

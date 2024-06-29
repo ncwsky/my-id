@@ -7,11 +7,17 @@ require __DIR__ . '/conf.php';
 require __DIR__ . '/../myphp/base.php';
 require __DIR__ . '/../myphp/GetOpt.php';
 
+/*
+\MyId\IdLib::$snowStartDiff = 1719647456000;
+for($i=0;$i<10000;$i++){
+    echo \MyId\IdLib::bigId(),PHP_EOL;
+}
+*/
 
 //解析命令参数
 GetOpt::parse('h:n:', ['host:', 'num:']);
 $testCount = (int)GetOpt::val('n', 'num', 0);
-$host = GetOpt::val('h', 'host', '192.168.0.219:55012');
+$host = GetOpt::val('h', 'host', '192.168.0.219:55013');
 if ($testCount <= 0) $testCount = 0;
 
 $client = \MyId\TcpClient::instance();
@@ -23,14 +29,14 @@ $client->onConnect = function (\MyId\TcpClient $client){
     $client->send('123456');
 };
 $name = 'id_incr_1';
-$cmd = 'a=init&name='.$name.'&init_id=0&delta=1'; //自增数
+$cmd = 'a=init&name='.$name.'&init_id=0&delta=1&step=1000'; //自增数
 if($cmd && $client->send($cmd)){
     echo $client->recv().PHP_EOL;
 }
 while (1) {
     $run_times++;
     try {
-        $client->send('name='.$name.'&size='.mt_rand(1, 30));
+        $client->send('name='.$name.'&size='.mt_rand(1, 500));
         $ret = $client->recv();
         //echo date("Y-m-d H:i:s") . ' recv['.$name.']: ' . $ret, PHP_EOL;
         //sleep(1);

@@ -14,6 +14,7 @@ $cfg = array(
     'auth_key' => '', // tcp认证key  连接后发送认证内容:auth_key
     'auto_init_id' => false, //自动按默认初始未配置的id
     'snow_data_id' => -1, //雪花生成中心id[0-9] -1随机
+    'snow_start_diff' => 0, //(毫秒)雪花生成起始时间差值，建议直接使用当前时间戳作为差值, 0不作处理直接使用当前时间作为起始
     'master_address'=> '',
     'master_key'=>''
 );
