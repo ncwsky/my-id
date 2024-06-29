@@ -1,4 +1,4 @@
-基于workerman|swoole的单进程ID生成服务  
+基于workerman|swoole的ID生成服务(单进程、主从服务模式)  
 >全局唯一数字id 最大到9223372036854775807    
 >id自增 重启可能存在id浪费  
 >支持批量获取id   
@@ -44,7 +44,7 @@
 管理面板  
 监控数据
 
-##备注
+##备注  
 initId 初始id  
 nextId 获取id  
 updateId 更新id

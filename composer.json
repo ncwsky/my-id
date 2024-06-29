@@ -1,7 +1,7 @@
 {
     "name": "myphps/my-id",
     "type": "library",
-    "description": "基于workerman的单进程id生成服务",
+    "description": "基于workerman|swoole的ID生成服务(单进程、主从服务模式)",
     "license": "MIT",
     "keywords": ["id"],
     "homepage": "https://github.com/ncwsky/my-id",
