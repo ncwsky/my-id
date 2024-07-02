@@ -21,6 +21,7 @@ $count = 0;
 //认证
 $client->onConnect = function ($client){
     $client->send('123456');
+    echo $client->recv(),PHP_EOL;
 
     $name = 'test';
     $cmd = 'a=init&name='.$name.'&init_id=0&step=800&delta=2'; //自增数

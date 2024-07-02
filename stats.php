@@ -23,6 +23,7 @@ $client->packageEof = "\r\n";
 //认证
 $client->onConnect = function ($client){
     $client->send('123456');
+    echo $client->recv(),PHP_EOL;
 };
 $cmd && $client->send($cmd);
 while (1) {

@@ -517,15 +517,17 @@ class TcpClient
     public function recv($raw = false)
     {
         $this->open();
-        if (!$this->isConnect) return false;
+        if (!$this->isConnect) {
+            $this->error = 'not connected';
+            return false;
+        }
         $this->baseRead($read_buffer);
 
-        if ($read_buffer === '') {
-            //return false;
-            throw new \Exception("recv empty ".date("Y-m-d H:i:s"));
-        }
-
         try {
+            if ($read_buffer === '') {
+                //return false;
+                throw new \Exception("recv empty ".date("Y-m-d H:i:s"));
+            }
             return $raw ? $read_buffer : $this->decode($read_buffer);
         } catch (\Exception $e) {
             $this->error = $e->getMessage();
