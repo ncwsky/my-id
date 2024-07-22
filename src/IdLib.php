@@ -169,7 +169,7 @@ class IdLib
             $sequence = 1;
             $lastTime = $time;
         }
-        return $time . str_pad((string)$sequence, '4', '0', STR_PAD_LEFT) . $worker_id . $p;
+        return $time . str_pad((string)$sequence, 4, '0', STR_PAD_LEFT) . $worker_id . $p;
         //$uname + random_int(100, 999)
     }
 
